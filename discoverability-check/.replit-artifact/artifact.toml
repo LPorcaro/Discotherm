@@ -1,0 +1,12 @@
+kind = "web"
+previewPath = "/"
+title = "Discoverability Check"
+version = "1.0.0"
+
+[[services]]
+localPort = 8000
+name = "Discoverability Check"
+paths = ["/"]
+
+[services.development]
+run = "uvicorn main:app --host 0.0.0.0 --port 8000"
