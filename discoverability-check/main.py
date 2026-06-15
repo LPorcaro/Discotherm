@@ -100,4 +100,79 @@ async def get_artist(request: ArtistRequest):
     }
 
 
+SONGSTATS_BASE = "https://api.songstats.com/enterprise/v1"
+
+
+@app.post("/artist/stats")
+async def get_artist_stats(request: ArtistRequest):
+    mxm_key = os.getenv("MUSIXMATCH_API_KEY")
+    ss_key = os.getenv("SONGSTATS_API_KEY")
+    if not mxm_key:
+        raise HTTPException(status_code=500, detail="MUSIXMATCH_API_KEY not configured")
+    if not ss_key:
+        raise HTTPException(status_code=500, detail="SONGSTATS_API_KEY not configured")
+
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
+        # Step 1: resolve artist via Musixmatch
+        mxm_resp = await client.get(
+            f"{MUSIXMATCH_BASE}/artist.search",
+            params={"q_artist": request.name, "page_size": 1, "page": 1, "apikey": mxm_key},
+        )
+        mxm_resp.raise_for_status()
+        artist_list = mxm_body(mxm_resp.json()).get("artist_list", [])
+        if not artist_list:
+            raise HTTPException(status_code=404, detail=f"Artist '{request.name}' not found on Musixmatch")
+
+        artist = artist_list[0]["artist"]
+        artist_id = artist["artist_id"]
+        resolved_name = artist["artist_name"]
+
+        # Step 2: search Songstats for the resolved artist name
+        ss_headers = {"apikey": ss_key, "Accept": "application/json"}
+        ss_search = await client.get(
+            f"{SONGSTATS_BASE}/artists/search",
+            params={"q": resolved_name},
+            headers=ss_headers,
+        )
+        ss_search.raise_for_status()
+        ss_results = ss_search.json().get("results", [])
+        if not ss_results:
+            raise HTTPException(status_code=404, detail=f"Artist '{resolved_name}' not found on Songstats")
+
+        songstats_artist = ss_results[0]
+        songstats_artist_id = songstats_artist["songstats_artist_id"]
+
+        # Step 3: fetch streaming stats
+        ss_stats = await client.get(
+            f"{SONGSTATS_BASE}/artists/stats",
+            params={"songstats_artist_id": songstats_artist_id},
+            headers=ss_headers,
+        )
+        ss_stats.raise_for_status()
+
+    stats_by_source: dict = {}
+    for entry in ss_stats.json().get("stats", []):
+        stats_by_source[entry["source"]] = entry["data"]
+
+    spotify = stats_by_source.get("spotify", {})
+
+    return {
+        "musixmatch_artist_id": artist_id,
+        "songstats_artist_id": songstats_artist_id,
+        "artist_name": resolved_name,
+        "songstats_profile_url": songstats_artist.get("site_url"),
+        "spotify": {
+            "streams_total": spotify.get("streams_total"),
+            "monthly_listeners_current": spotify.get("monthly_listeners_current"),
+            "followers_total": spotify.get("followers_total"),
+            "popularity_current": spotify.get("popularity_current"),
+            "playlists_current": spotify.get("playlists_current"),
+            "playlists_total": spotify.get("playlists_total"),
+            "playlists_editorial_current": spotify.get("playlists_editorial_current"),
+            "playlist_reach_current": spotify.get("playlist_reach_current"),
+        },
+        "raw_stats": stats_by_source,
+    }
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
