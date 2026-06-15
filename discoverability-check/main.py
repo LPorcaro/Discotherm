@@ -6,11 +6,14 @@ from pydantic import BaseModel
 import httpx
 from dotenv import load_dotenv
 
+from scoring import compute_discoverability_score
+
 load_dotenv()
 
 app = FastAPI(title="Discoverability Check")
 
 MUSIXMATCH_BASE = "https://api.musixmatch.com/ws/1.1"
+SONGSTATS_BASE = "https://api.songstats.com/enterprise/v1"
 PAGES_TO_FETCH = 5   # 5 pages × 100 = up to 500 candidate tracks
 PAGE_SIZE = 100
 
@@ -36,6 +39,53 @@ async def fetch_track_page(client: httpx.AsyncClient, q_artist: str, page: int, 
     )
     resp.raise_for_status()
     return mxm_body(resp.json()).get("track_list", [])
+
+
+async def _resolve_tracks(client: httpx.AsyncClient, artist_name: str, exact_name: str, mxm_key: str) -> list[dict]:
+    """Fetch all pages concurrently and return deduplicated track dicts for this artist."""
+    pages = await asyncio.gather(
+        *[fetch_track_page(client, artist_name, p, mxm_key) for p in range(1, PAGES_TO_FETCH + 1)],
+        return_exceptions=True,
+    )
+    seen_ids: set[int] = set()
+    matched: list[dict] = []
+    for page_result in pages:
+        if isinstance(page_result, Exception):
+            continue
+        for item in page_result:
+            track = item.get("track", {})
+            tid = track.get("track_id")
+            if tid in seen_ids:
+                continue
+            seen_ids.add(tid)
+            if track.get("artist_name", "").lower() == exact_name:
+                matched.append(track)
+    return matched
+
+
+async def _resolve_songstats(client: httpx.AsyncClient, resolved_name: str, ss_key: str) -> dict:
+    """Search Songstats for the artist and return raw_stats keyed by source."""
+    headers = {"apikey": ss_key, "Accept": "application/json"}
+    ss_search = await client.get(
+        f"{SONGSTATS_BASE}/artists/search",
+        params={"q": resolved_name},
+        headers=headers,
+    )
+    ss_search.raise_for_status()
+    results = ss_search.json().get("results", [])
+    if not results:
+        return {}
+    songstats_artist_id = results[0]["songstats_artist_id"]
+    ss_stats = await client.get(
+        f"{SONGSTATS_BASE}/artists/stats",
+        params={"songstats_artist_id": songstats_artist_id},
+        headers=headers,
+    )
+    ss_stats.raise_for_status()
+    raw: dict = {}
+    for entry in ss_stats.json().get("stats", []):
+        raw[entry["source"]] = entry["data"]
+    return raw
 
 
 @app.post("/artist")
@@ -172,6 +222,51 @@ async def get_artist_stats(request: ArtistRequest):
             "playlist_reach_current": spotify.get("playlist_reach_current"),
         },
         "raw_stats": stats_by_source,
+    }
+
+
+@app.post("/artist/report")
+async def get_artist_report(request: ArtistRequest):
+    mxm_key = os.getenv("MUSIXMATCH_API_KEY")
+    ss_key = os.getenv("SONGSTATS_API_KEY")
+    if not mxm_key:
+        raise HTTPException(status_code=500, detail="MUSIXMATCH_API_KEY not configured")
+    if not ss_key:
+        raise HTTPException(status_code=500, detail="SONGSTATS_API_KEY not configured")
+
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+        # Step 1: resolve artist via Musixmatch (must happen first — both branches need artist_name)
+        mxm_resp = await client.get(
+            f"{MUSIXMATCH_BASE}/artist.search",
+            params={"q_artist": request.name, "page_size": 1, "page": 1, "apikey": mxm_key},
+        )
+        mxm_resp.raise_for_status()
+        artist_list = mxm_body(mxm_resp.json()).get("artist_list", [])
+        if not artist_list:
+            raise HTTPException(status_code=404, detail=f"Artist '{request.name}' not found on Musixmatch")
+
+        artist = artist_list[0]["artist"]
+        artist_id = artist["artist_id"]
+        resolved_name = artist["artist_name"]
+        exact_name = resolved_name.lower()
+
+        # Step 2: track fetch + Songstats stats concurrently
+        tracks, raw_stats = await asyncio.gather(
+            _resolve_tracks(client, request.name, exact_name, mxm_key),
+            _resolve_songstats(client, resolved_name, ss_key),
+        )
+
+    # Step 3: score
+    scored = compute_discoverability_score(artist, tracks, raw_stats)
+
+    return {
+        "artist_name": resolved_name,
+        "artist_id": artist_id,
+        "total_tracks": len(tracks),
+        "overall_score": scored["overall_score"],
+        "overall_status": scored["overall_status"],
+        "diagnostics": scored["diagnostics"],
+        "note": "stream_concentration uses num_favourite as proxy — not actual stream counts",
     }
 
 
