@@ -7,168 +7,456 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    :root {
+      --bg: #0f0f0f;
+      --surface: #161616;
+      --surface2: #1e1e1e;
+      --border: #2a2a2a;
+      --text: #ffffff;
+      --muted: #888888;
+      --muted2: #555555;
+      --cyan: #00e5ff;
+      --cyan-dim: rgba(0, 229, 255, 0.12);
+      --orange: #ff9500;
+      --red: #ff3b30;
+    }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0f0f11;
-      color: #e8e8ec;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 48px 16px;
+      padding: 64px 20px 80px;
+      -webkit-font-smoothing: antialiased;
     }
 
-    h1 {
-      font-size: 1.75rem;
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      margin-bottom: 8px;
-    }
-
-    .subtitle {
-      color: #888;
-      font-size: 0.9rem;
-      margin-bottom: 40px;
-    }
-
-    .card {
-      background: #18181b;
-      border: 1px solid #2a2a2e;
-      border-radius: 12px;
-      padding: 32px;
+    .container {
       width: 100%;
-      max-width: 560px;
-    }
-
-    label {
-      display: block;
-      font-size: 0.8rem;
-      font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: #888;
-      margin-bottom: 8px;
-    }
-
-    .input-row {
+      max-width: 640px;
       display: flex;
-      gap: 8px;
+      flex-direction: column;
+      gap: 40px;
     }
 
+    /* ── Header ── */
+    .header { text-align: center; }
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      color: var(--text);
+    }
+    .header h1 span { color: var(--cyan); }
+    .header p {
+      margin-top: 8px;
+      font-size: 0.95rem;
+      color: var(--muted);
+      letter-spacing: 0.01em;
+    }
+
+    /* ── Search ── */
+    .search-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+    }
+    .search-label {
+      display: block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .search-row { display: flex; gap: 10px; }
     input[type="text"] {
       flex: 1;
-      background: #0f0f11;
-      border: 1px solid #2a2a2e;
-      border-radius: 8px;
-      color: #e8e8ec;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
       font-size: 1rem;
-      padding: 10px 14px;
+      padding: 12px 16px;
       outline: none;
       transition: border-color 0.15s;
     }
-
-    input[type="text"]:focus {
-      border-color: #7c6af7;
-    }
-
+    input[type="text"]::placeholder { color: var(--muted2); }
+    input[type="text"]:focus { border-color: var(--cyan); }
     button {
-      background: #7c6af7;
+      background: var(--cyan);
       border: none;
-      border-radius: 8px;
-      color: #fff;
+      border-radius: 10px;
+      color: #000;
       cursor: pointer;
-      font-size: 0.95rem;
-      font-weight: 600;
-      padding: 10px 22px;
-      transition: background 0.15s, opacity 0.15s;
+      font-size: 0.9rem;
+      font-weight: 700;
+      padding: 12px 22px;
+      transition: opacity 0.15s, transform 0.1s;
       white-space: nowrap;
+      letter-spacing: 0.01em;
     }
+    button:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+    button:active:not(:disabled) { transform: translateY(0); }
+    button:disabled { opacity: 0.35; cursor: not-allowed; }
 
-    button:hover:not(:disabled) { background: #6a58e0; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    .status {
-      margin-top: 16px;
-      font-size: 0.85rem;
-      color: #888;
-      min-height: 20px;
-    }
-
-    .status.error { color: #f87171; }
-
-    .result-block {
-      margin-top: 24px;
+    /* ── Loading ── */
+    .loading {
       display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 24px 0;
+    }
+    .loading.visible { display: flex; }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 2px solid var(--border);
+      border-top-color: var(--cyan);
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading p { color: var(--muted); font-size: 0.85rem; }
+
+    /* ── Error ── */
+    .error-box {
+      display: none;
+      background: rgba(255, 59, 48, 0.08);
+      border: 1px solid rgba(255, 59, 48, 0.3);
+      border-radius: 12px;
+      padding: 16px 20px;
+      color: #ff6b6b;
+      font-size: 0.9rem;
+    }
+    .error-box.visible { display: block; }
+
+    /* ── Results ── */
+    .results { display: none; flex-direction: column; gap: 20px; }
+    .results.visible { display: flex; }
+
+    .results-header {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .results-header h2 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .results-header .track-count {
+      font-size: 0.82rem;
+      color: var(--muted);
     }
 
-    .result-block.visible { display: block; }
-
-    .result-label {
-      font-size: 0.75rem;
-      font-weight: 600;
-      letter-spacing: 0.06em;
+    /* ── Score thermometer ── */
+    .score-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .score-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .score-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
       text-transform: uppercase;
-      color: #555;
-      margin-bottom: 8px;
+      color: var(--muted);
+    }
+    .status-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+    .status-badge.good    { background: rgba(0,229,255,0.12); color: var(--cyan); }
+    .status-badge.warning { background: rgba(255,149,0,0.12); color: var(--orange); }
+    .status-badge.critical{ background: rgba(255,59,48,0.12); color: var(--red); }
+
+    .score-number {
+      font-size: 5rem;
+      font-weight: 900;
+      letter-spacing: -0.05em;
+      line-height: 1;
+    }
+    .score-number.good    { color: var(--cyan); }
+    .score-number.warning { color: var(--orange); }
+    .score-number.critical{ color: var(--red); }
+
+    .thermometer-track {
+      height: 8px;
+      background: var(--surface2);
+      border-radius: 99px;
+      overflow: hidden;
+      position: relative;
+    }
+    .thermometer-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 0.8s cubic-bezier(0.16,1,0.3,1);
+    }
+    .thermometer-fill.good    { background: var(--cyan); }
+    .thermometer-fill.warning { background: var(--orange); }
+    .thermometer-fill.critical{ background: var(--red); }
+
+    .thermometer-ticks {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 6px;
+    }
+    .thermometer-ticks span {
+      font-size: 0.68rem;
+      color: var(--muted2);
     }
 
-    pre {
-      background: #0f0f11;
-      border: 1px solid #2a2a2e;
-      border-radius: 8px;
-      color: #a5f3a5;
-      font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
-      font-size: 0.8rem;
+    /* ── Diagnostic cards ── */
+    .diagnostics-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .diagnostic-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      transition: border-color 0.2s;
+    }
+    .diagnostic-card:hover { border-color: #333; }
+
+    .diag-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .diag-name {
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+    .diag-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .diag-score {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+    .diag-score.good    { color: var(--cyan); }
+    .diag-score.warning { color: var(--orange); }
+    .diag-score.critical{ color: var(--red); }
+
+    .diag-bar-track {
+      height: 4px;
+      background: var(--surface2);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .diag-bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 0.7s cubic-bezier(0.16,1,0.3,1);
+    }
+    .diag-bar-fill.good    { background: var(--cyan); }
+    .diag-bar-fill.warning { background: var(--orange); }
+    .diag-bar-fill.critical{ background: var(--red); }
+
+    .diag-details {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .diag-stat { display: flex; flex-direction: column; gap: 2px; }
+    .diag-stat-val {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .diag-stat-key {
+      font-size: 0.7rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .diag-rec {
+      font-size: 0.82rem;
+      color: var(--muted);
       line-height: 1.6;
-      max-height: 480px;
-      overflow: auto;
-      padding: 16px;
-      white-space: pre-wrap;
-      word-break: break-word;
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+    }
+
+    .note-text {
+      font-size: 0.75rem;
+      color: var(--muted2);
+      text-align: center;
     }
   </style>
 </head>
 <body>
-  <h1>Discoverability Check</h1>
-  <p class="subtitle">Pull artist info and top tracks from Musixmatch</p>
+  <div class="container">
 
-  <div class="card">
-    <label for="artist-input">Artist name</label>
-    <div class="input-row">
-      <input
-        id="artist-input"
-        type="text"
-        placeholder="e.g. Radiohead"
-        autocomplete="off"
-      />
-      <button id="submit-btn">Look up</button>
+    <div class="header">
+      <h1>Discoverability <span>Check</span></h1>
+      <p>Is your music being heard?</p>
     </div>
-    <p class="status" id="status"></p>
 
-    <div class="result-block" id="result-block">
-      <p class="result-label">Raw JSON response</p>
-      <pre id="result-pre"></pre>
+    <div class="search-card">
+      <label class="search-label" for="artist-input">Artist name</label>
+      <div class="search-row">
+        <input id="artist-input" type="text" placeholder="e.g. Sufjan Stevens" autocomplete="off" />
+        <button id="submit-btn">Run Report</button>
+      </div>
     </div>
+
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <p id="loading-msg">Fetching data from Musixmatch &amp; Songstats…</p>
+    </div>
+
+    <div class="error-box" id="error-box"></div>
+
+    <div class="results" id="results">
+      <div class="results-header">
+        <h2 id="res-artist-name"></h2>
+        <span class="track-count" id="res-track-count"></span>
+      </div>
+
+      <div class="score-card">
+        <div class="score-top">
+          <span class="score-label">Overall Score</span>
+          <span class="status-badge" id="res-status-badge"></span>
+        </div>
+        <div class="score-number" id="res-score-number"></div>
+        <div>
+          <div class="thermometer-track">
+            <div class="thermometer-fill" id="res-thermo" style="width:0%"></div>
+          </div>
+          <div class="thermometer-ticks">
+            <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
+          </div>
+        </div>
+      </div>
+
+      <span class="diagnostics-label">Diagnostics</span>
+      <div id="diag-container"></div>
+
+      <p class="note-text" id="res-note"></p>
+    </div>
+
   </div>
 
   <script>
-    const input = document.getElementById('artist-input');
-    const btn = document.getElementById('submit-btn');
-    const status = document.getElementById('status');
-    const resultBlock = document.getElementById('result-block');
-    const resultPre = document.getElementById('result-pre');
+    const input   = document.getElementById('artist-input');
+    const btn     = document.getElementById('submit-btn');
+    const loading = document.getElementById('loading');
+    const loadMsg = document.getElementById('loading-msg');
+    const errBox  = document.getElementById('error-box');
+    const results = document.getElementById('results');
 
-    async function lookup() {
+    function statusClass(status) {
+      return { good: 'good', warning: 'warning', critical: 'critical' }[status] || 'warning';
+    }
+
+    function fmt(val) {
+      if (val == null) return '—';
+      if (typeof val === 'number') {
+        if (val >= 1e9) return (val / 1e9).toFixed(2) + 'B';
+        if (val >= 1e6) return (val / 1e6).toFixed(1) + 'M';
+        if (val >= 1e3) return (val / 1e3).toFixed(1) + 'K';
+        return val.toLocaleString();
+      }
+      return String(val);
+    }
+
+    function detailRows(detail) {
+      const LABELS = {
+        tracks_total:              'Total Tracks',
+        tracks_with_full_metadata: 'Full Metadata',
+        total_favourites:          'Total Saves',
+        top3_favourites:           'Top-3 Saves',
+        concentration_pct:         'Concentration',
+        playlists_total:           'Total Playlists',
+        playlists_editorial:       'Editorial',
+        editorial_pct:             'Editorial %',
+      };
+      return Object.entries(detail)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => {
+          const label = LABELS[k] || k;
+          const display = k.endsWith('_pct')
+            ? (typeof v === 'number' ? v.toFixed(2) + '%' : v)
+            : fmt(v);
+          return `<div class="diag-stat">
+            <span class="diag-stat-val">${display}</span>
+            <span class="diag-stat-key">${label}</span>
+          </div>`;
+        }).join('');
+    }
+
+    function renderDiagnostic(d) {
+      const sc = statusClass(d.status);
+      return `
+        <div class="diagnostic-card">
+          <div class="diag-top">
+            <span class="diag-name">${d.name.replace(/_/g,' ')}</span>
+            <div class="diag-right">
+              <span class="diag-score ${sc}">${d.score}</span>
+              <span class="status-badge ${sc}">${d.status}</span>
+            </div>
+          </div>
+          <div class="diag-bar-track">
+            <div class="diag-bar-fill ${sc}" style="width:${d.score}%"></div>
+          </div>
+          ${d.detail ? `<div class="diag-details">${detailRows(d.detail)}</div>` : ''}
+          <p class="diag-rec">${d.recommendation}</p>
+        </div>`;
+    }
+
+    function setVisible(el, show) {
+      el.classList.toggle('visible', show);
+    }
+
+    async function runReport() {
       const name = input.value.trim();
       if (!name) return;
 
       btn.disabled = true;
-      status.className = 'status';
-      status.textContent = 'Fetching…';
-      resultBlock.classList.remove('visible');
+      setVisible(errBox, false);
+      setVisible(results, false);
+      setVisible(loading, true);
+      loadMsg.textContent = 'Fetching data from Musixmatch & Songstats…';
 
       try {
-        const res = await fetch('/artist', {
+        const res = await fetch('/artist/report', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name }),
@@ -177,24 +465,48 @@
         const data = await res.json();
 
         if (!res.ok) {
-          status.className = 'status error';
-          status.textContent = data.detail || `Error ${res.status}`;
+          errBox.textContent = data.detail || `Error ${res.status}`;
+          setVisible(errBox, true);
           return;
         }
 
-        status.textContent = '';
-        resultPre.textContent = JSON.stringify(data, null, 2);
-        resultBlock.classList.add('visible');
+        // Populate header
+        document.getElementById('res-artist-name').textContent = data.artist_name;
+        document.getElementById('res-track-count').textContent =
+          `${data.total_tracks.toLocaleString()} tracks found`;
+
+        // Overall score
+        const sc = statusClass(data.overall_status);
+        const scoreEl  = document.getElementById('res-score-number');
+        const thermoEl = document.getElementById('res-thermo');
+        const badgeEl  = document.getElementById('res-status-badge');
+
+        scoreEl.textContent = data.overall_score;
+        scoreEl.className   = `score-number ${sc}`;
+        thermoEl.style.width = `${data.overall_score}%`;
+        thermoEl.className   = `thermometer-fill ${sc}`;
+        badgeEl.textContent  = data.overall_status.toUpperCase();
+        badgeEl.className    = `status-badge ${sc}`;
+
+        // Diagnostics
+        const container = document.getElementById('diag-container');
+        container.innerHTML = (data.diagnostics || []).map(renderDiagnostic).join('');
+
+        // Note
+        document.getElementById('res-note').textContent = data.note || '';
+
+        setVisible(results, true);
       } catch (err) {
-        status.className = 'status error';
-        status.textContent = 'Network error — is the server running?';
+        errBox.textContent = 'Network error — is the server running?';
+        setVisible(errBox, true);
       } finally {
+        setVisible(loading, false);
         btn.disabled = false;
       }
     }
 
-    btn.addEventListener('click', lookup);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') lookup(); });
+    btn.addEventListener('click', runReport);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') runReport(); });
   </script>
 </body>
 </html>
