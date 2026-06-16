@@ -1,7 +1,9 @@
 import os
 import asyncio
 import logging
-from fastapi import FastAPI, HTTPException, APIRouter
+from datetime import datetime, timedelta, timezone
+from fastapi import FastAPI, HTTPException, APIRouter, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import httpx
@@ -13,15 +15,35 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("discoverability-check")
+# httpx logs full request URLs at INFO level, which include apikey query params for every
+# upstream call (Musixmatch/Songstats/JamBase) — suppress to WARNING so keys never hit logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 BASE_PATH = ""
 
 app = FastAPI(title="Discoverability Check")
 router = APIRouter()
 
+
+@app.exception_handler(httpx.HTTPError)
+async def _httpx_error_handler(request: Request, exc: httpx.HTTPError) -> JSONResponse:
+    """Catch ALL upstream httpx failures so they never reach the default traceback logger.
+
+    An httpx error's message embeds the request URL, which carries our apikey query params
+    (Musixmatch/Songstats). Registering a handler for the specific httpx.HTTPError type routes
+    it through Starlette's ExceptionMiddleware, which returns this response WITHOUT logging the
+    traceback — so the only thing logged is the sanitized status/type from _safe_http_error.
+    """
+    logger.warning("Upstream request failed on %s: %s", request.url.path, _safe_http_error(exc))
+    return JSONResponse(status_code=502, content={"detail": "Upstream data provider request failed"})
+
+
 MUSIXMATCH_BASE = "https://api.musixmatch.com/ws/1.1"
+JAMBASE_BASE = "https://www.jambase.com/jb-api/v1"
 SONGSTATS_BASE = "https://api.songstats.com/enterprise/v1"
 PAGES_TO_FETCH = 5   # 5 pages × 100 = up to 500 candidate tracks per artist_id
+TOURING_WINDOW_DAYS = 365  # how far back JamBase events are counted for touring context
+JAMBASE_PER_PAGE = 100     # JamBase events page size
 PAGE_SIZE = 100
 ARTIST_SEARCH_PAGE_SIZE = 30  # wide enough to surface fragmented duplicate artist records
 
@@ -137,6 +159,88 @@ async def _resolve_tracks(client: httpx.AsyncClient, artist_ids: list[int], mxm_
             seen_ids.add(tid)
             out.append(track)
     return out
+
+
+def _safe_http_error(exc: Exception) -> str:
+    """Describe an httpx/JSON error WITHOUT exposing the request URL (it carries the apikey)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    return type(exc).__name__
+
+
+def _event_dates(events: list[dict]) -> list[str]:
+    """Extract YYYY-MM-DD strings from a JamBase events list, skipping malformed entries."""
+    return [
+        ev["startDate"][:10]
+        for ev in events
+        if isinstance(ev.get("startDate"), str) and len(ev["startDate"]) >= 10
+    ]
+
+
+async def _resolve_touring_context(
+    client: httpx.AsyncClient, artist_name: str, jb_key: str | None
+) -> dict | None:
+    """Annotate touring activity from JamBase events (NOT a scored diagnostic).
+
+    Counts the artist's events over the trailing TOURING_WINDOW_DAYS window and finds the
+    most recent show date. Returns None on ANY failure (missing key, HTTP error, bad JSON,
+    artist not on JamBase) so the report degrades gracefully and the badge is simply omitted.
+    """
+    if not jb_key:
+        return None
+
+    today = datetime.now(timezone.utc).date()
+    date_from = today - timedelta(days=TOURING_WINDOW_DAYS)
+    base_params = {
+        "artistName": artist_name,
+        "eventDateFrom": date_from.isoformat(),
+        "eventDateTo": today.isoformat(),
+        "perPage": JAMBASE_PER_PAGE,
+        "apikey": jb_key,
+    }
+    try:
+        resp = await client.get(f"{JAMBASE_BASE}/events", params={**base_params, "page": 1})
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("JamBase touring lookup failed for %r: %s", artist_name, _safe_http_error(exc))
+        return None
+
+    if not data.get("success"):
+        codes = [e.get("code") for e in (data.get("errors") or []) if isinstance(e, dict)]
+        logger.warning("JamBase touring lookup unsuccessful for %r: %s", artist_name, codes)
+        return None
+
+    events = data.get("events") or []
+    pagination = data.get("pagination") or {}
+    show_count = pagination.get("totalItems")
+    if not isinstance(show_count, int):
+        show_count = len(events)
+
+    dates = _event_dates(events)
+
+    # JamBase paginates events in date order, so the most recent show in a past window can
+    # sit on the LAST page. When the window spans multiple pages, fetch the last page too
+    # (bounded: one extra request) and fold its dates in so most_recent stays accurate
+    # regardless of ascending/descending ordering.
+    total_pages = pagination.get("totalPages")
+    if not isinstance(total_pages, int):
+        total_pages = (show_count + JAMBASE_PER_PAGE - 1) // JAMBASE_PER_PAGE if show_count else 1
+    if total_pages > 1:
+        try:
+            last = await client.get(f"{JAMBASE_BASE}/events", params={**base_params, "page": total_pages})
+            last.raise_for_status()
+            dates += _event_dates(last.json().get("events") or [])
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("JamBase last-page fetch failed for %r: %s", artist_name, _safe_http_error(exc))
+
+    most_recent = max(dates) if dates else None
+
+    return {
+        "show_count": show_count,
+        "most_recent_show_date": most_recent,
+        "is_active_touring_artist": show_count > 0,
+    }
 
 
 async def _fetch_artist_image(client: httpx.AsyncClient, tracks: list[dict]) -> str | None:
@@ -335,6 +439,7 @@ async def get_artist_report(request: ArtistRequest):
         raise HTTPException(status_code=500, detail="MUSIXMATCH_API_KEY not configured")
     if not ss_key:
         raise HTTPException(status_code=500, detail="SONGSTATS_API_KEY not configured")
+    jb_key = os.getenv("JAMBASE_API_KEY")  # optional — touring badge degrades gracefully without it
 
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
         # Step 1: resolve to a canonical artist whose f_artist_id has tracks (must happen
@@ -345,10 +450,12 @@ async def get_artist_report(request: ArtistRequest):
         artist_id = artist["artist_id"]
         resolved_name = artist["artist_name"]
 
-        # Step 2: track fetch (aggregated by f_artist_id) + Songstats stats concurrently
-        tracks, raw_stats = await asyncio.gather(
+        # Step 2: track fetch (aggregated by f_artist_id) + Songstats stats + JamBase touring
+        # context concurrently (touring context is a non-scored annotation, key optional).
+        tracks, raw_stats, touring_context = await asyncio.gather(
             _resolve_tracks(client, artist_ids, mxm_key),
             _resolve_songstats(client, resolved_name, ss_key),
+            _resolve_touring_context(client, resolved_name, jb_key),
         )
 
         # Step 3: artist thumbnail + mood analysis (both depend on resolved tracks)
@@ -368,6 +475,7 @@ async def get_artist_report(request: ArtistRequest):
         "overall_score": scored["overall_score"],
         "overall_status": scored["overall_status"],
         "diagnostics": scored["diagnostics"],
+        "touring_context": touring_context,
         "note": "stream_concentration uses num_favourite as proxy — not actual stream counts",
     }
 

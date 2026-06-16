@@ -169,6 +169,22 @@
       font-size: 0.82rem;
       color: var(--muted);
     }
+    .touring-badge {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      align-self: flex-start;
+      margin-top: 2px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      color: var(--cyan);
+      background: color-mix(in srgb, var(--cyan) 12%, transparent);
+      border: 1px solid color-mix(in srgb, var(--cyan) 35%, transparent);
+    }
+    .touring-badge.show { display: inline-flex; }
 
     /* ── Score thermometer ── */
     .score-card {
@@ -393,6 +409,7 @@
         <div class="artist-meta">
           <h2 id="res-artist-name"></h2>
           <span class="track-count" id="res-track-count"></span>
+          <span class="touring-badge" id="res-touring-badge"></span>
         </div>
       </div>
 
@@ -574,6 +591,20 @@
         document.getElementById('res-artist-name').textContent = data.artist_name;
         document.getElementById('res-track-count').textContent =
           `${data.total_tracks.toLocaleString()} tracks found`;
+
+        // Touring context badge (non-diagnostic annotation; omit if unavailable or no shows)
+        const touringEl = document.getElementById('res-touring-badge');
+        const tc = data.touring_context;
+        if (tc && tc.is_active_touring_artist && tc.show_count > 0) {
+          const n = tc.show_count.toLocaleString();
+          let label = `🎤 Active touring artist — ${n} show${tc.show_count === 1 ? '' : 's'} in the last 12 months`;
+          if (tc.most_recent_show_date) label += ` · latest ${tc.most_recent_show_date}`;
+          touringEl.textContent = label;
+          touringEl.classList.add('show');
+        } else {
+          touringEl.textContent = '';
+          touringEl.classList.remove('show');
+        }
 
         // Overall score
         const sc = statusClass(data.overall_status);
