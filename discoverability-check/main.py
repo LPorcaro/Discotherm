@@ -1,8 +1,10 @@
 import os
+import re
 import asyncio
 import logging
+import unicodedata
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI, HTTPException, APIRouter, Request
+from fastapi import FastAPI, HTTPException, APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -10,6 +12,7 @@ import httpx
 from dotenv import load_dotenv
 
 from scoring import compute_discoverability_score
+from pdf_export import generate_report_pdf
 
 load_dotenv()
 
@@ -94,13 +97,42 @@ async def _probe_artist_track_count(client: httpx.AsyncClient, artist_id: int, m
         available = j.get("message", {}).get("header", {}).get("available")
         if isinstance(available, int):
             return available
-        return len(mxm_body(j).get("track_list", []))
+        # message.body is sometimes an empty list (not a dict) on no-result responses.
+        body = mxm_body(j)
+        track_list = body.get("track_list", []) if isinstance(body, dict) else []
+        return len(track_list)
     except (httpx.HTTPError, ValueError):
         return 0
 
 
+# Compilation / placeholder entities Musixmatch surfaces as "artists". They carry huge track
+# counts (hundreds of tracks) and otherwise hijack disambiguation purely on volume — e.g.
+# "Franco 126" resolving to "Various Artists". Matched case-insensitively on the exact name.
+AGGREGATOR_NAMES = {
+    "various artists",
+    "various",
+    "soundtrack",
+    "original cast recording",
+    "unknown artist",
+}
+
+
 def _norm(name: str) -> str:
     return (name or "").strip().lower()
+
+
+def _fold(s: str) -> str:
+    """Strip diacritics so accented names compare equal, e.g. "Céline" -> "Celine"."""
+    return "".join(c for c in unicodedata.normalize("NFKD", s or "") if not unicodedata.combining(c))
+
+
+def _fuzzy(name: str) -> str:
+    """Loose key for name matching: accent-folded, lowercased, non-alphanumerics removed.
+
+    Lets minor punctuation/spacing/accent differences match, e.g. "Franco 126" == "Franco126"
+    and "Celine Dion" == "Céline Dion".
+    """
+    return re.sub(r"[^a-z0-9]+", "", _fold(name).lower())
 
 
 async def _candidate_ids_from_tracks(
@@ -141,6 +173,99 @@ async def _candidate_ids_from_tracks(
     return ids
 
 
+async def _gather_candidates(
+    client: httpx.AsyncClient, query: str, mxm_key: str
+) -> dict[int, str]:
+    """Build an {artist_id: artist_name} candidate map for a single query string.
+
+    Combines two sources: artist.search (fragmented same-name duplicates) and the artist_ids
+    mined from a rating-sorted track.search?q_artist (which surfaces the real record
+    artist.search often omits).
+    """
+    artist_resp, track_ids = await asyncio.gather(
+        client.get(
+            f"{MUSIXMATCH_BASE}/artist.search",
+            params={"q_artist": query, "page_size": ARTIST_SEARCH_PAGE_SIZE, "page": 1, "apikey": mxm_key},
+        ),
+        _candidate_ids_from_tracks(client, query, mxm_key),
+    )
+    artist_resp.raise_for_status()
+    out: dict[int, str] = {}
+    for a in mxm_body(artist_resp.json()).get("artist_list", []):
+        ar = a.get("artist")
+        if ar and ar.get("artist_id"):
+            out[ar["artist_id"]] = ar.get("artist_name", "")
+    for aid, name in track_ids.items():
+        out.setdefault(aid, name)
+    return out
+
+
+def _select_canonical(
+    candidates: list[dict], counts: list[int], query: str
+) -> tuple[dict, list[int], bool]:
+    """Pure selection over a candidate list and its parallel track counts.
+
+    Drops aggregator/placeholder entities, then picks the canonical record by NAME match to the
+    query (accent/punctuation/spacing-insensitive), using track count only as a tiebreaker within
+    the name-matched group. Falls back to highest volume when nothing matches the name.
+
+    Returns (canonical_artist, artist_ids_to_aggregate, name_matched). ``name_matched`` is True
+    when at least one candidate matched the query by name — callers use it to decide whether a
+    space-stripped retry is worth the extra API calls.
+    """
+    qf = _fuzzy(query)
+
+    # Drop aggregator / placeholder entities (compilation buckets, soundtracks, "Unknown
+    # Artist", etc.) before selection — they carry huge track counts and otherwise win on
+    # volume alone. Log every drop so we know how often this guard actually fires.
+    keep: list[int] = []
+    for i, c in enumerate(candidates):
+        if _norm(c["artist_name"]) in AGGREGATOR_NAMES:
+            logger.warning(
+                "Disambiguation dropped aggregator candidate %r (artist_id=%s, %d tracks) for query %r",
+                c["artist_name"], c["artist_id"], counts[i], query,
+            )
+            continue
+        keep.append(i)
+    if not keep:
+        keep = list(range(len(candidates)))  # every candidate was an aggregator — don't fail hard
+
+    # Prefer candidates whose NAME matches the query over whichever record has the most tracks.
+    # Name matching is accent/punctuation/spacing-insensitive (so "Celine Dion" matches the real
+    # "Céline Dion" record and "Franco 126" matches "Franco126"). Track count is only a tiebreaker
+    # *within* the name-matched group — this is what lets the real high-volume "Céline Dion" (520
+    # tracks) beat a 1-track exact homonym. Only when nothing matches the name do we fall back to
+    # volume among remaining candidates.
+    name_matched = [i for i in keep if counts[i] > 0 and _fuzzy(candidates[i]["artist_name"]) == qf]
+    with_tracks = [i for i in keep if counts[i] > 0]
+    pool = name_matched or with_tracks or keep
+    best_idx = max(pool, key=lambda i: counts[i])
+    canonical = candidates[best_idx]
+    canon_name = _norm(canonical["artist_name"])
+
+    artist_ids = [
+        c["artist_id"]
+        for c, n in zip(candidates, counts)
+        if n > 0 and _norm(c["artist_name"]) == canon_name
+    ]
+    if not artist_ids:
+        artist_ids = [canonical["artist_id"]]
+    return canonical, artist_ids, bool(name_matched)
+
+
+async def _probe_counts(
+    client: httpx.AsyncClient, candidates: list[dict], mxm_key: str
+) -> list[int]:
+    """Probe the true track count for every candidate concurrently."""
+    if not candidates:
+        return []
+    return list(
+        await asyncio.gather(
+            *[_probe_artist_track_count(client, c["artist_id"], mxm_key) for c in candidates]
+        )
+    )
+
+
 async def _resolve_artist_records(
     client: httpx.AsyncClient, query: str, mxm_key: str
 ) -> tuple[dict | None, list[int]]:
@@ -151,62 +276,49 @@ async def _resolve_artist_records(
     catalogue is spread over 25+ records, one with 238 tracks, most with 0-1). Worse, the
     real high-volume record is often missing entirely from artist.search's first page, so
     relying on artist.search alone yields a tiny ghost catalogue. So we:
-      1. Build a candidate pool from TWO sources: artist.search (fragmented same-name
-         duplicates) AND the artist_ids mined from a rating-sorted track.search?q_artist
-         (which surfaces the real record artist.search omits).
+      1. Build a candidate pool from artist.search + track.search?q_artist for the raw query.
       2. Probe EVERY candidate's true track count via f_artist_id (header.available).
-      3. Pick the canonical as the HIGHEST-track-count record *whose name exactly matches
-         the query* — the exact-name filter is essential because fuzzy track.search also
-         surfaces unrelated high-volume artists (e.g. "Katy Perry" pulls in Pat Boone /
-         Bob Marley with far larger catalogues). Fall back to the global max, then to the
-         first candidate, when nothing matches the query name.
-      4. Aggregate over every record whose name *exactly* matches the canonical name AND
-         has tracks, so fragmented same-name records are merged while "feat./variant" acts
+      3. Drop aggregator/placeholder entities ("Various Artists", soundtracks, …) that carry
+         huge volume and would otherwise win on track count alone.
+      4. Pick the canonical by NAME match to the query (accent/punctuation/spacing-insensitive
+         fuzzy), using track count only as a tiebreaker within a name-matched group — not as the
+         primary signal. The name gate keeps fuzzy track.search homonyms (e.g. "Five Sense" for
+         "Franco 126") from hijacking selection.
+      5. LAZILY retry with a space-stripped variant ONLY when step 4 found no name match —
+         Musixmatch indexes some acts without spaces (e.g. "Franco126"), so the spaced query
+         "Franco 126" never surfaces the real record. Doing this lazily avoids doubling API
+         volume (and tripping Musixmatch rate limits) for the common case that resolves cleanly.
+      6. Aggregate over every record whose name *exactly* matches the canonical name AND has
+         tracks, so fragmented same-name records are merged while "feat./variant" acts
          (e.g. "Taylor Swift feat. Bon Iver") stay excluded.
 
     Returns (canonical_artist, artist_ids_to_fetch). Returns (None, []) when nothing found.
     """
-    artist_resp, track_ids = await asyncio.gather(
-        client.get(
-            f"{MUSIXMATCH_BASE}/artist.search",
-            params={"q_artist": query, "page_size": ARTIST_SEARCH_PAGE_SIZE, "page": 1, "apikey": mxm_key},
-        ),
-        _candidate_ids_from_tracks(client, query, mxm_key),
-    )
-    artist_resp.raise_for_status()
-    artist_list = mxm_body(artist_resp.json()).get("artist_list", [])
-    candidates = [a["artist"] for a in artist_list if a.get("artist")]
+    cand_map = await _gather_candidates(client, query, mxm_key)
+    candidates = [{"artist_id": aid, "artist_name": name} for aid, name in cand_map.items()]
+    counts = await _probe_counts(client, candidates, mxm_key)
 
-    # Merge in track-search-surfaced ids not already present, as minimal {id, name} records.
-    seen = {c["artist_id"] for c in candidates}
-    for aid, name in track_ids.items():
-        if aid not in seen:
-            candidates.append({"artist_id": aid, "artist_name": name})
-            seen.add(aid)
+    canonical, artist_ids, matched = (None, [], False)
+    if candidates:
+        canonical, artist_ids, matched = _select_canonical(candidates, counts, query)
+
+    # Lazy fallback: only when the spaced query produced NO confident name match do we pay for a
+    # second round of API calls against a space-stripped variant (e.g. "Franco 126" -> "Franco126").
+    despaced = re.sub(r"\s+", "", query)
+    if not matched and despaced and despaced != query:
+        extra_map = await _gather_candidates(client, despaced, mxm_key)
+        new = [
+            {"artist_id": aid, "artist_name": name}
+            for aid, name in extra_map.items()
+            if aid not in cand_map
+        ]
+        if new:
+            candidates += new
+            counts += await _probe_counts(client, new, mxm_key)
+            canonical, artist_ids, matched = _select_canonical(candidates, counts, query)
 
     if not candidates:
         return None, []
-
-    counts = await asyncio.gather(
-        *[_probe_artist_track_count(client, c["artist_id"], mxm_key) for c in candidates]
-    )
-
-    q = _norm(query)
-    # Prefer the highest-volume record whose name exactly matches the query (this is the real
-    # artist); the exact-name gate keeps fuzzy track.search homonyms from hijacking selection.
-    name_matched = [i for i in range(len(candidates)) if _norm(candidates[i]["artist_name"]) == q]
-    pool = name_matched if any(counts[i] > 0 for i in name_matched) else range(len(candidates))
-    best_idx = max(pool, key=lambda i: counts[i])
-    canonical = candidates[best_idx] if counts[best_idx] > 0 else candidates[0]
-    canon_name = _norm(canonical["artist_name"])
-
-    artist_ids = [
-        c["artist_id"]
-        for c, n in zip(candidates, counts)
-        if n > 0 and _norm(c["artist_name"]) == canon_name
-    ]
-    if not artist_ids:
-        artist_ids = [canonical["artist_id"]]
     return canonical, artist_ids
 
 
@@ -337,6 +449,18 @@ async def _fetch_artist_image(client: httpx.AsyncClient, tracks: list[dict]) -> 
         resp.raise_for_status()
         return resp.json().get("thumbnail_url") or None
     except (httpx.HTTPError, ValueError):
+        return None
+
+
+async def _fetch_image_bytes(client: httpx.AsyncClient, url: str | None) -> bytes | None:
+    """Download the artist thumbnail bytes for embedding in the PDF (None on any failure)."""
+    if not url or not url.startswith("https://"):
+        return None
+    try:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content
+    except httpx.HTTPError:
         return None
 
 
@@ -507,8 +631,13 @@ async def get_artist_stats(request: ArtistRequest):
     }
 
 
-@router.post("/artist/report")
-async def get_artist_report(request: ArtistRequest):
+async def _build_artist_report(name: str) -> dict:
+    """Resolve an artist and assemble the full discoverability report payload.
+
+    Shared by the JSON endpoint and the PDF export so both render identical data. Raises
+    HTTPException(500) when required keys are missing and HTTPException(404) when the artist
+    cannot be resolved on Musixmatch.
+    """
     mxm_key = os.getenv("MUSIXMATCH_API_KEY")
     ss_key = os.getenv("SONGSTATS_API_KEY")
     if not mxm_key:
@@ -520,9 +649,9 @@ async def get_artist_report(request: ArtistRequest):
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
         # Step 1: resolve to a canonical artist whose f_artist_id has tracks (must happen
         # first — both the track fetch and the Songstats lookup need it).
-        artist, artist_ids = await _resolve_artist_records(client, request.name, mxm_key)
+        artist, artist_ids = await _resolve_artist_records(client, name, mxm_key)
         if artist is None:
-            raise HTTPException(status_code=404, detail=f"Artist '{request.name}' not found on Musixmatch")
+            raise HTTPException(status_code=404, detail=f"Artist '{name}' not found on Musixmatch")
         artist_id = artist["artist_id"]
         resolved_name = artist["artist_name"]
 
@@ -554,6 +683,32 @@ async def get_artist_report(request: ArtistRequest):
         "touring_context": touring_context,
         "note": "stream_concentration uses num_favourite as proxy — not actual stream counts",
     }
+
+
+@router.post("/artist/report")
+async def get_artist_report(request: ArtistRequest):
+    return await _build_artist_report(request.name)
+
+
+@router.get("/artist/report/pdf")
+async def get_artist_report_pdf(artist_name: str):
+    report = await _build_artist_report(artist_name)
+
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        image_bytes = await _fetch_image_bytes(client, report.get("artist_image_url"))
+
+    try:
+        pdf_bytes = generate_report_pdf(report, image_bytes=image_bytes)
+    except Exception:  # reportlab rendering should never 500 with a raw stack trace
+        logger.exception("PDF rendering failed for %r", report.get("artist_name"))
+        raise HTTPException(status_code=500, detail="Failed to render PDF report")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", report["artist_name"]).strip("-") or "artist"
+    filename = f"discoverability-report-{safe_name}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 app.include_router(router, prefix=BASE_PATH)

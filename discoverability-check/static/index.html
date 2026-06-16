@@ -103,6 +103,14 @@
     button:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
     button:active:not(:disabled) { transform: translateY(0); }
     button:disabled { opacity: 0.35; cursor: not-allowed; }
+    button.btn-secondary {
+      background: transparent;
+      border: 1px solid var(--cyan);
+      color: var(--cyan);
+      padding: 9px 16px;
+      font-size: 0.82rem;
+    }
+    #pdf-btn { margin-left: auto; align-self: center; flex-shrink: 0; }
 
     /* ── Loading ── */
     .loading {
@@ -431,6 +439,7 @@
           <span class="track-count" id="res-track-count"></span>
           <span class="touring-badge" id="res-touring-badge"></span>
         </div>
+        <button id="pdf-btn" class="btn-secondary" type="button">📄 Download PDF Report</button>
       </div>
 
       <div class="score-card">
@@ -677,6 +686,14 @@
         document.getElementById('res-artist-name').textContent = data.artist_name;
         document.getElementById('res-track-count').textContent =
           `${data.total_tracks.toLocaleString()} tracks found`;
+
+        // Wire the PDF export to the *resolved* artist name so the download matches what's shown.
+        document.getElementById('pdf-btn').onclick = () => {
+          window.open(
+            `/artist/report/pdf?artist_name=${encodeURIComponent(data.artist_name)}`,
+            '_blank',
+          );
+        };
 
         // Touring context badge (non-diagnostic annotation; omit if unavailable or no shows)
         const touringEl = document.getElementById('res-touring-badge');
