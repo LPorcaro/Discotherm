@@ -244,6 +244,17 @@
       font-size: 0.82rem;
       color: var(--muted);
     }
+    .recent-activity {
+      display: none;
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: -4px;
+    }
+    .recent-activity.show { display: inline-block; }
+    .recent-activity.stale {
+      color: var(--orange);
+      opacity: 0.85;
+    }
     .touring-badge {
       display: none;
       align-items: center;
@@ -627,6 +638,9 @@
 
       <div class="stat-chips" id="res-stat-chips"></div>
 
+      <span class="recent-activity" id="res-recent-activity"
+            title="Reflects when Musixmatch's catalogue metadata was last updated — not necessarily a new release."></span>
+
       <div class="fan-callout" id="res-fan-callout"></div>
 
       <div class="score-card">
@@ -674,6 +688,15 @@
       if (n >= 1e6) return fmt(n / 1e6, 'M');
       if (n >= 1e3) return fmt(n / 1e3, 'K');
       return String(Math.round(n));
+    }
+
+    // Format a YYYY-MM-DD string as "Sep 30, 2021" without going through Date() (which would
+    // reinterpret the date in the local timezone and risk an off-by-one day shift).
+    function formatUpdateDate(iso) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+      if (!m) return iso || '';
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return `${months[+m[2] - 1]} ${+m[3]}, ${m[1]}`;
     }
 
     // Build the Songstats stat chips (monthly listeners / followers / popularity). Chips with
@@ -925,6 +948,19 @@
         document.getElementById('res-artist-name').textContent = data.artist_name;
         document.getElementById('res-track-count').textContent =
           `${data.total_tracks.toLocaleString()} track${data.total_tracks === 1 ? '' : 's'} found`;
+
+        // Catalogue-recency line — reflects Musixmatch metadata recency, NOT a release date.
+        // Amber tint when the newest record is >3 years old (possibly legacy/inactive catalogue).
+        const raEl = document.getElementById('res-recent-activity');
+        const ra = data.recent_activity;
+        if (ra && ra.most_recent_update_date) {
+          raEl.textContent = `Catalogue last updated: ${formatUpdateDate(ra.most_recent_update_date)}`;
+          raEl.classList.toggle('stale', Number(ra.years_since_update) > 3);
+          raEl.classList.add('show');
+        } else {
+          raEl.textContent = '';
+          raEl.classList.remove('show', 'stale');
+        }
 
         // Wire the PDF export to the *resolved* artist name so the download matches what's shown.
         document.getElementById('pdf-btn').onclick = () => {

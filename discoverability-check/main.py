@@ -633,6 +633,49 @@ async def get_artist_stats(request: ArtistRequest):
     }
 
 
+def _parse_mxm_datetime(value: str) -> datetime | None:
+    """Parse a Musixmatch timestamp (e.g. '2021-09-30T12:34:56Z') into an aware UTC datetime.
+
+    Tolerates the trailing 'Z', missing timezone (assumed UTC), and date-only strings.
+    Returns None for anything unparseable so callers can simply skip bad entries.
+    """
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            dt = datetime.strptime(s[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _recent_activity(tracks: list[dict]) -> dict | None:
+    """Most recent ``updated_time`` across all tracks as a catalogue-recency signal.
+
+    NOTE: Musixmatch's ``updated_time`` marks when *their record* was last touched (metadata
+    edits, reissues, sync deliveries) — NOT a confirmed new release. Surfaced to the UI as
+    "catalogue last updated", deliberately not as a release date. Returns None when no track
+    carries a parseable timestamp.
+    """
+    dates = [d for d in (_parse_mxm_datetime(t.get("updated_time")) for t in tracks) if d]
+    if not dates:
+        return None
+    most_recent = max(dates)
+    # Clamp to 0 so a future-dated upstream record or clock skew can't yield a negative age.
+    years = max(0.0, (datetime.now(timezone.utc) - most_recent).days / 365.25)
+    return {
+        "most_recent_update_date": most_recent.date().isoformat(),
+        "years_since_update": round(years, 1),
+    }
+
+
 async def _build_artist_report(name: str) -> dict:
     """Resolve an artist and assemble the full discoverability report payload.
 
@@ -685,6 +728,7 @@ async def _build_artist_report(name: str) -> dict:
         "artist_id": artist_id,
         "artist_image_url": artist_image_url,
         "total_tracks": len(tracks),
+        "recent_activity": _recent_activity(tracks),
         "overall_score": scored["overall_score"],
         "overall_status": scored["overall_status"],
         "diagnostics": scored["diagnostics"],
