@@ -24,7 +24,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 BASE_PATH = ""
 
-app = FastAPI(title="Discoverability Check")
+app = FastAPI(title="Discotherm")
 router = APIRouter()
 
 
@@ -718,7 +718,7 @@ async def get_artist_report_pdf(artist_name: str):
         logger.exception("PDF rendering failed for %r", report.get("artist_name"))
         raise HTTPException(status_code=500, detail="Failed to render PDF report")
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", report["artist_name"]).strip("-") or "artist"
-    filename = f"discoverability-report-{safe_name}.pdf"
+    filename = f"discotherm-report-{safe_name}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
