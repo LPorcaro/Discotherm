@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 90" fill="none">
+  <!-- thermometer stem -->
+  <rect x="23" y="6" width="14" height="58" rx="7" fill="none" stroke="#22d3ee" stroke-width="2.5"/>
+  <!-- mercury fill bar -->
+  <rect x="27" y="24" width="6" height="36" rx="3" fill="#22d3ee"/>
+  <!-- globe bulb: full outline -->
+  <circle cx="30" cy="66" r="17" fill="none" stroke="#888888" stroke-width="2"/>
+  <!-- latitude rings -->
+  <ellipse cx="30" cy="66" rx="17" ry="6" fill="none" stroke="#888888" stroke-width="1.5"/>
+  <ellipse cx="30" cy="59" rx="14" ry="4.5" fill="none" stroke="#888888" stroke-width="1.5"/>
+  <ellipse cx="30" cy="73" rx="14" ry="4.5" fill="none" stroke="#888888" stroke-width="1.5"/>
+  <!-- globe core -->
+  <circle cx="30" cy="66" r="4" fill="#22d3ee"/>
+</svg>

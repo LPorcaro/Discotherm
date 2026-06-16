@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Discotherm</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -43,6 +44,13 @@
 
     /* ── Header ── */
     .header { text-align: center; }
+    .header-title {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .header-title .logo { height: 40px; width: auto; display: block; }
     .header h1 {
       font-size: 2rem;
       font-weight: 800;
@@ -475,7 +483,10 @@
   <div class="container">
 
     <div class="header">
-      <h1>Discotherm</h1>
+      <div class="header-title">
+        <img src="/static/logo.svg" alt="Discotherm logo" class="logo" />
+        <h1><span>Disco</span>therm</h1>
+      </div>
       <p>Is anybody out there?</p>
     </div>
 

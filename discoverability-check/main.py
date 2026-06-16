@@ -727,4 +727,5 @@ async def get_artist_report_pdf(artist_name: str):
 
 
 app.include_router(router, prefix=BASE_PATH)
+app.mount(f"{BASE_PATH}/static", StaticFiles(directory="static"), name="static-assets")
 app.mount(BASE_PATH or "/", StaticFiles(directory="static", html=True), name="static")
