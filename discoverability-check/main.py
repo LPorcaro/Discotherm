@@ -1,6 +1,6 @@
 import os
 import asyncio
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import httpx
@@ -10,7 +10,10 @@ from scoring import compute_discoverability_score
 
 load_dotenv()
 
+BASE_PATH = "/discoverability-check"
+
 app = FastAPI(title="Discoverability Check")
+router = APIRouter()
 
 MUSIXMATCH_BASE = "https://api.musixmatch.com/ws/1.1"
 SONGSTATS_BASE = "https://api.songstats.com/enterprise/v1"
@@ -88,7 +91,7 @@ async def _resolve_songstats(client: httpx.AsyncClient, resolved_name: str, ss_k
     return raw
 
 
-@app.post("/artist")
+@router.post("/artist")
 async def get_artist(request: ArtistRequest):
     api_key = os.getenv("MUSIXMATCH_API_KEY")
     if not api_key:
@@ -153,7 +156,7 @@ async def get_artist(request: ArtistRequest):
 SONGSTATS_BASE = "https://api.songstats.com/enterprise/v1"
 
 
-@app.post("/artist/stats")
+@router.post("/artist/stats")
 async def get_artist_stats(request: ArtistRequest):
     mxm_key = os.getenv("MUSIXMATCH_API_KEY")
     ss_key = os.getenv("SONGSTATS_API_KEY")
@@ -225,7 +228,7 @@ async def get_artist_stats(request: ArtistRequest):
     }
 
 
-@app.post("/artist/report")
+@router.post("/artist/report")
 async def get_artist_report(request: ArtistRequest):
     mxm_key = os.getenv("MUSIXMATCH_API_KEY")
     ss_key = os.getenv("SONGSTATS_API_KEY")
@@ -270,4 +273,5 @@ async def get_artist_report(request: ArtistRequest):
     }
 
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+app.include_router(router, prefix=BASE_PATH)
+app.mount(BASE_PATH, StaticFiles(directory="static", html=True), name="static")
