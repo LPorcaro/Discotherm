@@ -36,13 +36,39 @@ def _status(score: float) -> str:
     return "critical"
 
 
+def _artist_tier(stats: dict) -> str:
+    """Classify the artist by audience size so recommendations can be scale-aware.
+
+    Uses Spotify ``monthly_listeners_current`` (falling back to ``followers_total``) to bucket:
+      emerging (<100k), mid-tier (100k–5M), major (>5M).
+    Defaults to 'emerging' when no audience signal is available, so advice stays actionable
+    rather than wrongly reframing an unknown artist as an established act.
+    """
+    spotify = stats.get("spotify", {}) if isinstance(stats, dict) else {}
+    audience = spotify.get("monthly_listeners_current") or spotify.get("followers_total") or 0
+    if audience > 5_000_000:
+        return "major"
+    if audience >= 100_000:
+        return "mid-tier"
+    return "emerging"
+
+
+def _following_phrase(tier: str) -> str:
+    """A noun phrase describing the artist's audience, for use inside structural recommendations."""
+    if tier == "major":
+        return "a large mainstream following"
+    if tier == "mid-tier":
+        return "an established, mid-tier following"
+    return "a growing following"
+
+
 # ---------------------------------------------------------------------------
 # Diagnostic 1 — CATALOGUE_DEPTH
 # Measures metadata completeness: what fraction of tracks have both
 # has_lyrics=1 and has_richsync=1 (synced lyrics).  A catalogue that is
 # invisible to lyric-based search / karaoke / sync placements scores low.
 # ---------------------------------------------------------------------------
-def _catalogue_depth(tracks: list[dict]) -> dict:
+def _catalogue_depth(tracks: list[dict], tier: str = "emerging") -> dict:
     total = len(tracks)
     if total == 0:
         return {
@@ -63,24 +89,51 @@ def _catalogue_depth(tracks: list[dict]) -> dict:
     ratio = with_both / total  # 0–1
     score = round(_clamp(ratio * 100))
 
+    established = tier in ("mid-tier", "major")
+    following = _following_phrase(tier)
     if score >= 60:
-        rec = (
-            f"{with_both}/{total} tracks have full metadata (lyrics + synced lyrics). "
-            "Maintain this by submitting richsync data for every new release."
-        )
+        if established:
+            rec = (
+                f"{with_both}/{total} tracks carry full metadata (lyrics + synced lyrics) — "
+                f"comprehensive coverage consistent with {following} and an established "
+                "distribution operation. Structurally, the catalogue is fully visible to "
+                "lyric-driven discovery surfaces."
+            )
+        else:
+            rec = (
+                f"{with_both}/{total} tracks have full metadata (lyrics + synced lyrics). "
+                "Maintain this by submitting richsync data for every new release."
+            )
     elif score >= 30:
-        rec = (
-            f"Only {with_both}/{total} tracks carry both lyrics and synced lyrics. "
-            "Submit missing richsync files via your distributor or directly through "
-            "the Musixmatch for Artists portal to improve lyric-search visibility."
-        )
+        if established:
+            rec = (
+                f"Only {with_both}/{total} tracks carry both lyrics and synced lyrics. For "
+                f"{following}, this gap is less a pitching to-do than a structural artefact of "
+                "back-catalogue metadata: older or reissued material predates current richsync "
+                "delivery standards, leaving part of an otherwise established catalogue invisible "
+                "to lyric-search and karaoke/sync surfaces."
+            )
+        else:
+            rec = (
+                f"Only {with_both}/{total} tracks carry both lyrics and synced lyrics. "
+                "Submit missing richsync files via your distributor or directly through "
+                "the Musixmatch for Artists portal to improve lyric-search visibility."
+            )
     else:
-        rec = (
-            f"Only {with_both}/{total} tracks have full lyric metadata — the catalogue "
-            "is largely invisible to lyric-driven discovery surfaces. Prioritise "
-            "uploading lyrics and richsync for the top 20 tracks first, then backfill "
-            "the rest via your distributor's metadata delivery pipeline."
-        )
+        if established:
+            rec = (
+                f"Only {with_both}/{total} tracks have full lyric metadata — strikingly low for "
+                f"{following}. At this scale this points to a structural metadata-delivery gap "
+                "across the catalogue (likely licensing/territory or legacy-distribution "
+                "fragmentation) rather than something the artist's team simply hasn't done."
+            )
+        else:
+            rec = (
+                f"Only {with_both}/{total} tracks have full lyric metadata — the catalogue "
+                "is largely invisible to lyric-driven discovery surfaces. Prioritise "
+                "uploading lyrics and richsync for the top 20 tracks first, then backfill "
+                "the rest via your distributor's metadata delivery pipeline."
+            )
 
     return {
         "name": "CATALOGUE_DEPTH",
@@ -99,7 +152,7 @@ def _catalogue_depth(tracks: list[dict]) -> dict:
 # discover the deeper catalogue.
 # Score is INVERTED: lower concentration = higher score.
 # ---------------------------------------------------------------------------
-def _stream_concentration(tracks: list[dict]) -> dict:
+def _stream_concentration(tracks: list[dict], tier: str = "emerging") -> dict:
     if not tracks:
         return {
             "name": "STREAM_CONCENTRATION",
@@ -140,27 +193,55 @@ def _stream_concentration(tracks: list[dict]) -> dict:
     # Invert: 0 % concentration → 100 score; 100 % → 0 score
     score = round(_clamp(100 - concentration_pct))
 
+    established = tier in ("mid-tier", "major")
+    following = _following_phrase(tier)
     if score >= 60:
-        rec = (
-            f"The top 3 tracks account for {concentration_pct:.1f}% of all saves — "
-            "listeners are discovering the wider catalogue. Keep releasing varied content "
-            "and pitching deep cuts to editorial playlists."
-        )
+        if established:
+            rec = (
+                f"The top 3 tracks account for {concentration_pct:.1f}% of all saves — for "
+                f"{following}, the catalogue tail is unusually well distributed, with listeners "
+                "routinely moving past the hits into deeper material. Structurally this sits at "
+                "the healthy end of the listening-distribution curve."
+            )
+        else:
+            rec = (
+                f"The top 3 tracks account for {concentration_pct:.1f}% of all saves — "
+                "listeners are discovering the wider catalogue. Keep releasing varied content "
+                "and pitching deep cuts to editorial playlists."
+            )
     elif score >= 30:
-        rec = (
-            f"The top 3 tracks account for {concentration_pct:.1f}% of all saves. "
-            "The catalogue tail has some traction but is under-exposed. "
-            "Consider targeting catalogue tracks in playlist pitches, YouTube premieres, "
-            "or TikTok campaigns to surface lesser-known material."
-        )
+        if established:
+            rec = (
+                f"The top 3 tracks account for {concentration_pct:.1f}% of all saves. For "
+                f"{following}, this partial concentration reflects the familiar superstar "
+                "dynamic where a few flagship hits absorb most attention while the long tail "
+                "stays comparatively dormant — a structural property of mainstream listening, "
+                "not an execution gap."
+            )
+        else:
+            rec = (
+                f"The top 3 tracks account for {concentration_pct:.1f}% of all saves. "
+                "The catalogue tail has some traction but is under-exposed. "
+                "Consider targeting catalogue tracks in playlist pitches, YouTube premieres, "
+                "or TikTok campaigns to surface lesser-known material."
+            )
     else:
-        rec = (
-            f"The top 3 tracks account for {concentration_pct:.1f}% of all saves — "
-            "the catalogue tail is virtually invisible. Run targeted campaigns on "
-            "non-single tracks: pitch them to editorial, include them in social content, "
-            "and use pre-save pages for back-catalogue releases to build momentum outside "
-            "the flagship hits."
-        )
+        if established:
+            rec = (
+                f"The top 3 tracks account for {concentration_pct:.1f}% of all saves — even with "
+                f"{following}, attention is heavily concentrated in a few flagship tracks. This "
+                "is the classic hits-dominate-the-catalogue pattern for established artists: a "
+                "structural consequence of how playlists and radio recirculate proven songs, "
+                "rather than a sign the deeper catalogue was under-promoted."
+            )
+        else:
+            rec = (
+                f"The top 3 tracks account for {concentration_pct:.1f}% of all saves — "
+                "the catalogue tail is virtually invisible. Run targeted campaigns on "
+                "non-single tracks: pitch them to editorial, include them in social content, "
+                "and use pre-save pages for back-catalogue releases to build momentum outside "
+                "the flagship hits."
+            )
 
     return {
         "name": "STREAM_CONCENTRATION",
@@ -183,7 +264,7 @@ def _stream_concentration(tracks: list[dict]) -> dict:
 # A healthy ratio signals that the artist has broken into Spotify editorial,
 # which multiplies organic discovery. Scale: 10 % editorial ratio → score 100.
 # ---------------------------------------------------------------------------
-def _playlist_reach(stats: dict) -> dict:
+def _playlist_reach(stats: dict, tier: str = "emerging") -> dict:
     spotify = stats.get("spotify", {})
     editorial = spotify.get("playlists_editorial_current") or 0
     total = spotify.get("playlists_current") or 0
@@ -210,43 +291,82 @@ def _playlist_reach(stats: dict) -> dict:
     abs_component = min(math.log10(editorial + 1) / math.log10(1000) * 100, 100)
     score = round(_clamp(0.5 * pct_component + 0.5 * abs_component))
 
+    established = tier in ("mid-tier", "major")
+    following = _following_phrase(tier)
     if score >= 60:
-        rec = (
-            f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%), "
-            f"a strong editorial footprint in both absolute ({editorial} placements) and "
-            "relative terms. Sustain it by submitting every new release to Spotify editorial "
-            "at least 7 days before release and maintaining release cadence to stay in the "
-            "algorithm."
-        )
+        if established:
+            rec = (
+                f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%), "
+                f"a strong editorial footprint for {following} in both absolute ({editorial} "
+                "placements) and relative terms. At this scale a sustained editorial presence is "
+                "itself the competitive moat — a structural advantage that holds only while "
+                "release cadence keeps the catalogue algorithmically live."
+            )
+        else:
+            rec = (
+                f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%), "
+                f"a strong editorial footprint in both absolute ({editorial} placements) and "
+                "relative terms. Sustain it by submitting every new release to Spotify editorial "
+                "at least 7 days before release and maintaining release cadence to stay in the "
+                "algorithm."
+            )
     elif score >= 30:
-        rec = (
-            f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%). "
-            f"With {editorial} editorial placements there is meaningful absolute reach, but "
-            "most of the catalogue's playlist presence is organic. Increase pitching "
-            "frequency: submit every track (not just singles) to Spotify for Artists "
-            "editorial, and work with your label or distributor on personalised playlist "
-            "outreach."
-        )
+        if established:
+            rec = (
+                f"Despite {editorial} editorial placements and {following}, only "
+                f"{editorial_pct:.2f}% of this artist's playlist presence is editorial — "
+                "illustrating how even established artists remain disproportionately reliant on "
+                "organic/algorithmic placement rather than human curation. This is a structural "
+                "feature of how editorial slots are allocated, not a shortfall in the artist's team."
+            )
+        else:
+            rec = (
+                f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%). "
+                f"With {editorial} editorial placements there is meaningful absolute reach, but "
+                "most of the catalogue's playlist presence is organic. Increase pitching "
+                "frequency: submit every track (not just singles) to Spotify for Artists "
+                "editorial, and work with your label or distributor on personalised playlist "
+                "outreach."
+            )
     elif editorial >= 50:
         # Critical-but-large: genuinely large absolute editorial reach, low ratio.
-        rec = (
-            f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%). "
-            f"Despite strong absolute editorial reach ({editorial} placements), organic "
-            "placements dominate the catalogue, so the editorial share is low. Protect the "
-            "editorial relationships you have and keep pitching new releases early, while "
-            "auditing whether the large organic footprint reflects healthy fan-driven "
-            "playlisting or low-quality adds that dilute the ratio."
-        )
+        if established:
+            rec = (
+                f"Despite {editorial} editorial placements and {following}, only "
+                f"{editorial_pct:.2f}% of this artist's playlist presence is editorial — "
+                "illustrating how even established artists remain disproportionately reliant on "
+                "organic/algorithmic placement rather than human curation. This reflects a "
+                "structural bottleneck in editorial slot allocation, not a lack of effort by the "
+                "artist's team."
+            )
+        else:
+            rec = (
+                f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%). "
+                f"Despite strong absolute editorial reach ({editorial} placements), organic "
+                "placements dominate the catalogue, so the editorial share is low. Protect the "
+                "editorial relationships you have and keep pitching new releases early, while "
+                "auditing whether the large organic footprint reflects healthy fan-driven "
+                "playlisting or low-quality adds that dilute the ratio."
+            )
     else:
         # Critical-and-small: weak in both absolute and relative terms.
-        rec = (
-            f"Only {editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%) "
-            f"— minimal editorial reach in both absolute ({editorial} placements) and relative "
-            "terms. The artist is almost entirely reliant on organic playlist adds. Prioritise "
-            "Spotify for Artists editorial pitches for every upcoming release, engage a "
-            "playlist plugger, and investigate whether metadata issues (genre tags, mood tags, "
-            "release date accuracy) are reducing editorial algorithmic eligibility."
-        )
+        if established:
+            rec = (
+                f"Only {editorial} of {total} current playlists are editorial "
+                f"({editorial_pct:.2f}%) despite {following} — an unusually thin editorial "
+                "footprint for an artist of this size. This points to a structural gap "
+                "(catalogue/metadata eligibility or territory mix limiting editorial algorithmic "
+                "reach) rather than ordinary pitching effort by the artist's team."
+            )
+        else:
+            rec = (
+                f"Only {editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%) "
+                f"— minimal editorial reach in both absolute ({editorial} placements) and relative "
+                "terms. The artist is almost entirely reliant on organic playlist adds. Prioritise "
+                "Spotify for Artists editorial pitches for every upcoming release, engage a "
+                "playlist plugger, and investigate whether metadata issues (genre tags, mood tags, "
+                "release date accuracy) are reducing editorial algorithmic eligibility."
+            )
 
     return {
         "name": "PLAYLIST_REACH",
@@ -556,9 +676,10 @@ def compute_discoverability_score(
     """
     mood_data = mood_data or {"track_moods": [], "skipped": 0}
 
-    d_catalogue = _catalogue_depth(tracks)
-    d_concentration = _stream_concentration(tracks)
-    d_reach = _playlist_reach(stats)
+    tier = _artist_tier(stats)
+    d_catalogue = _catalogue_depth(tracks, tier)
+    d_concentration = _stream_concentration(tracks, tier)
+    d_reach = _playlist_reach(stats, tier)
     d_mood = _mood_coherence(
         mood_data.get("track_moods", []),
         mood_data.get("skipped", 0),
