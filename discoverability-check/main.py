@@ -502,7 +502,11 @@ async def _resolve_mood_data(client: httpx.AsyncClient, tracks: list[dict], mxm_
 
 
 async def _resolve_songstats(client: httpx.AsyncClient, resolved_name: str, ss_key: str) -> dict:
-    """Search Songstats for the artist and return raw_stats keyed by source."""
+    """Resolve the artist on Songstats and return their stats plus last-release signal.
+
+    Returns ``{"raw_stats": <by-source dict>, "last_release": <dict|None>}``. Both degrade
+    gracefully: empty ``raw_stats`` and ``None`` last_release when the artist isn't found.
+    """
     headers = {"apikey": ss_key, "Accept": "application/json"}
     ss_search = await client.get(
         f"{SONGSTATS_BASE}/artists/search",
@@ -512,18 +516,22 @@ async def _resolve_songstats(client: httpx.AsyncClient, resolved_name: str, ss_k
     ss_search.raise_for_status()
     results = ss_search.json().get("results", [])
     if not results:
-        return {}
+        return {"raw_stats": {}, "last_release": None}
     songstats_artist_id = results[0]["songstats_artist_id"]
-    ss_stats = await client.get(
-        f"{SONGSTATS_BASE}/artists/stats",
-        params={"songstats_artist_id": songstats_artist_id},
-        headers=headers,
+    # Stats and catalogue are independent lookups — fetch concurrently.
+    ss_stats, last_release = await asyncio.gather(
+        client.get(
+            f"{SONGSTATS_BASE}/artists/stats",
+            params={"songstats_artist_id": songstats_artist_id},
+            headers=headers,
+        ),
+        _resolve_last_release(client, songstats_artist_id, headers),
     )
     ss_stats.raise_for_status()
     raw: dict = {}
     for entry in ss_stats.json().get("stats", []):
         raw[entry["source"]] = entry["data"]
-    return raw
+    return {"raw_stats": raw, "last_release": last_release}
 
 
 @router.post("/artist")
@@ -633,11 +641,11 @@ async def get_artist_stats(request: ArtistRequest):
     }
 
 
-def _parse_mxm_datetime(value: str) -> datetime | None:
-    """Parse a Musixmatch timestamp (e.g. '2021-09-30T12:34:56Z') into an aware UTC datetime.
+def _parse_timestamp(value: str) -> datetime | None:
+    """Parse an ISO timestamp or date string (e.g. '2025-11-14' or '2021-09-30T12:34:56Z').
 
     Tolerates the trailing 'Z', missing timezone (assumed UTC), and date-only strings.
-    Returns None for anything unparseable so callers can simply skip bad entries.
+    Returns an aware UTC datetime, or None for anything unparseable so callers can skip it.
     """
     if not isinstance(value, str):
         return None
@@ -656,23 +664,43 @@ def _parse_mxm_datetime(value: str) -> datetime | None:
     return dt
 
 
-def _recent_activity(tracks: list[dict]) -> dict | None:
-    """Most recent ``updated_time`` across all tracks as a catalogue-recency signal.
+async def _resolve_last_release(
+    client: httpx.AsyncClient, songstats_artist_id: str, headers: dict
+) -> dict | None:
+    """Most recent real release date across the artist's Songstats catalogue.
 
-    NOTE: Musixmatch's ``updated_time`` marks when *their record* was last touched (metadata
-    edits, reissues, sync deliveries) — NOT a confirmed new release. Surfaced to the UI as
-    "catalogue last updated", deliberately not as a release date. Returns None when no track
-    carries a parseable timestamp.
+    Songstats /artists/catalog exposes a genuine per-track ``release_date`` (unlike
+    Musixmatch's ``updated_time``, which only marks metadata edits). Takes the newest
+    release of any kind — note this includes third-party remixes/edits that credit the
+    artist, so superstars may surface a remix as their latest. Degrades to ``None`` on any
+    error or when no parseable release_date is present.
     """
-    dates = [d for d in (_parse_mxm_datetime(t.get("updated_time")) for t in tracks) if d]
-    if not dates:
+    try:
+        resp = await client.get(
+            f"{SONGSTATS_BASE}/artists/catalog",
+            params={"songstats_artist_id": songstats_artist_id, "limit": 100},
+            headers=headers,
+        )
+        resp.raise_for_status()
+        catalog = resp.json().get("catalog", [])
+    except (httpx.HTTPError, ValueError):
         return None
-    most_recent = max(dates)
+    dated: list[tuple[datetime, str | None]] = []
+    for entry in catalog:
+        if not isinstance(entry, dict):
+            continue
+        parsed = _parse_timestamp(entry.get("release_date"))
+        if parsed:
+            dated.append((parsed, entry.get("title")))
+    if not dated:
+        return None
+    most_recent, title = max(dated, key=lambda x: x[0])
     # Clamp to 0 so a future-dated upstream record or clock skew can't yield a negative age.
     years = max(0.0, (datetime.now(timezone.utc) - most_recent).days / 365.25)
     return {
-        "most_recent_update_date": most_recent.date().isoformat(),
-        "years_since_update": round(years, 1),
+        "most_recent_release_date": most_recent.date().isoformat(),
+        "years_since_release": round(years, 1),
+        "latest_release_title": title,
     }
 
 
@@ -702,11 +730,13 @@ async def _build_artist_report(name: str) -> dict:
 
         # Step 2: track fetch (aggregated by f_artist_id) + Songstats stats + JamBase touring
         # context concurrently (touring context is a non-scored annotation, key optional).
-        tracks, raw_stats, touring_context = await asyncio.gather(
+        tracks, songstats, touring_context = await asyncio.gather(
             _resolve_tracks(client, artist_ids, mxm_key),
             _resolve_songstats(client, resolved_name, ss_key),
             _resolve_touring_context(client, resolved_name, jb_key),
         )
+        raw_stats = songstats["raw_stats"]
+        last_release = songstats["last_release"]
 
         # Step 3: artist thumbnail + mood analysis (both depend on resolved tracks)
         artist_image_url, mood_data = await asyncio.gather(
@@ -728,7 +758,7 @@ async def _build_artist_report(name: str) -> dict:
         "artist_id": artist_id,
         "artist_image_url": artist_image_url,
         "total_tracks": len(tracks),
-        "recent_activity": _recent_activity(tracks),
+        "last_release": last_release,
         "overall_score": scored["overall_score"],
         "overall_status": scored["overall_status"],
         "overall_score_note": scored["overall_score_note"],

@@ -639,7 +639,7 @@
       <div class="stat-chips" id="res-stat-chips"></div>
 
       <span class="recent-activity" id="res-recent-activity"
-            title="Reflects when Musixmatch's catalogue metadata was last updated — not necessarily a new release."></span>
+            title="Most recent release date from the Songstats catalogue — newest release of any kind, including third-party remixes and edits."></span>
 
       <div class="fan-callout" id="res-fan-callout"></div>
 
@@ -949,13 +949,13 @@
         document.getElementById('res-track-count').textContent =
           `${data.total_tracks.toLocaleString()} track${data.total_tracks === 1 ? '' : 's'} found`;
 
-        // Catalogue-recency line — reflects Musixmatch metadata recency, NOT a release date.
-        // Amber tint when the newest record is >3 years old (possibly legacy/inactive catalogue).
+        // Last-release line — real per-track release_date from the Songstats catalogue
+        // (newest release of any kind, remixes included). Amber tint when >3 years old.
         const raEl = document.getElementById('res-recent-activity');
-        const ra = data.recent_activity;
-        if (ra && ra.most_recent_update_date) {
-          raEl.textContent = `Catalogue last updated: ${formatUpdateDate(ra.most_recent_update_date)}`;
-          raEl.classList.toggle('stale', Number(ra.years_since_update) > 3);
+        const lr = data.last_release;
+        if (lr && lr.most_recent_release_date) {
+          raEl.textContent = `Last release: ${formatUpdateDate(lr.most_recent_release_date)}`;
+          raEl.classList.toggle('stale', Number(lr.years_since_release) > 3);
           raEl.classList.add('show');
         } else {
           raEl.textContent = '';
