@@ -42,6 +42,20 @@
       gap: 40px;
     }
 
+    /* ── Hero (centered landing → top-pinned after first report) ── */
+    .hero {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 40px;
+      margin-top: 30vh; /* initial centered-ish state; JS refines to true center */
+      transition: margin-top 460ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .hero.no-anim { transition: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .hero { transition: none; }
+    }
+
     /* ── Header ── */
     .header { text-align: center; }
     .header-title {
@@ -482,19 +496,21 @@
 <body>
   <div class="container">
 
-    <div class="header">
-      <div class="header-title">
-        <img src="/static/logo.svg" alt="Discotherm logo" class="logo" />
-        <h1><span>Disco</span>therm</h1>
+    <div class="hero" id="hero">
+      <div class="header">
+        <div class="header-title">
+          <img src="/static/logo.svg" alt="Discotherm logo" class="logo" />
+          <h1><span>Disco</span>therm</h1>
+        </div>
+        <p>Is anybody out there?</p>
       </div>
-      <p>Is anybody out there?</p>
-    </div>
 
-    <div class="search-card">
-      <label class="search-label" for="artist-input">Artist name</label>
-      <div class="search-row">
-        <input id="artist-input" type="text" placeholder="e.g. Sufjan Stevens" autocomplete="off" />
-        <button id="submit-btn">Run Report</button>
+      <div class="search-card">
+        <label class="search-label" for="artist-input">Artist name</label>
+        <div class="search-row">
+          <input id="artist-input" type="text" placeholder="e.g. Sufjan Stevens" autocomplete="off" />
+          <button id="submit-btn">Run Report</button>
+        </div>
       </div>
     </div>
 
@@ -934,6 +950,7 @@
         document.getElementById('res-note').textContent = data.note || '';
 
         setVisible(results, true);
+        pinHeroToTop();
       } catch (err) {
         errBox.textContent = 'Network error — is the server running?';
         setVisible(errBox, true);
@@ -943,6 +960,32 @@
         reportInFlight = false;
       }
     }
+
+    // ── Landing layout: center the hero block, then pin to top on first report ──
+    const hero = document.getElementById('hero');
+    const BODY_PAD_TOP = 64; // matches body padding-top in CSS
+    let heroPinned = false;
+
+    function centerHero() {
+      if (heroPinned) return;
+      const offset = Math.max(0, (window.innerHeight - hero.offsetHeight) / 2 - BODY_PAD_TOP);
+      // Apply without animating (initial placement / resize should not slide).
+      hero.classList.add('no-anim');
+      hero.style.marginTop = offset + 'px';
+      // Force reflow so the no-anim margin takes effect before re-enabling transitions.
+      void hero.offsetHeight;
+      hero.classList.remove('no-anim');
+    }
+
+    function pinHeroToTop() {
+      if (heroPinned) return;
+      heroPinned = true;
+      hero.style.marginTop = '0px'; // transitions from centered offset → top
+    }
+
+    // Center on load and keep centered on resize until the first report pins it.
+    requestAnimationFrame(centerHero);
+    window.addEventListener('resize', centerHero);
 
     btn.addEventListener('click', runReport);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') runReport(); });
