@@ -141,8 +141,24 @@
 
     .results-header {
       display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 16px;
+    }
+    .results-header .artist-thumb {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: var(--border);
+      border: 1px solid var(--border);
+    }
+    .results-header .artist-meta {
+      display: flex;
       flex-direction: column;
       gap: 4px;
+      min-width: 0;
     }
     .results-header h2 {
       font-size: 1.4rem;
@@ -346,8 +362,11 @@
 
     <div class="results" id="results">
       <div class="results-header">
-        <h2 id="res-artist-name"></h2>
-        <span class="track-count" id="res-track-count"></span>
+        <img class="artist-thumb" id="res-artist-thumb" alt="" />
+        <div class="artist-meta">
+          <h2 id="res-artist-name"></h2>
+          <span class="track-count" id="res-track-count"></span>
+        </div>
       </div>
 
       <div class="score-card">
@@ -471,6 +490,17 @@
         }
 
         // Populate header
+        const PLACEHOLDER_THUMB =
+          "data:image/svg+xml;utf8," +
+          encodeURIComponent(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'>" +
+            "<rect width='80' height='80' fill='%23cfcfcf'/></svg>"
+          );
+        const thumbEl = document.getElementById('res-artist-thumb');
+        thumbEl.onerror = () => { thumbEl.onerror = null; thumbEl.src = PLACEHOLDER_THUMB; };
+        thumbEl.src = data.artist_image_url || PLACEHOLDER_THUMB;
+        thumbEl.alt = data.artist_name;
+
         document.getElementById('res-artist-name').textContent = data.artist_name;
         document.getElementById('res-track-count').textContent =
           `${data.total_tracks.toLocaleString()} tracks found`;

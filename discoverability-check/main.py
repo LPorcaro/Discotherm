@@ -66,6 +66,27 @@ async def _resolve_tracks(client: httpx.AsyncClient, artist_name: str, exact_nam
     return matched
 
 
+async def _fetch_artist_image(client: httpx.AsyncClient, tracks: list[dict]) -> str | None:
+    """Use the highest-rated track's Spotify id to fetch album art via Spotify oEmbed (no auth)."""
+    candidates = sorted(
+        (t for t in tracks if t.get("track_spotify_id")),
+        key=lambda t: t.get("track_rating", 0) or 0,
+        reverse=True,
+    )
+    if not candidates:
+        return None
+    spotify_id = candidates[0]["track_spotify_id"]
+    try:
+        resp = await client.get(
+            "https://open.spotify.com/oembed",
+            params={"url": f"https://open.spotify.com/track/{spotify_id}"},
+        )
+        resp.raise_for_status()
+        return resp.json().get("thumbnail_url") or None
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
 async def _resolve_songstats(client: httpx.AsyncClient, resolved_name: str, ss_key: str) -> dict:
     """Search Songstats for the artist and return raw_stats keyed by source."""
     headers = {"apikey": ss_key, "Accept": "application/json"}
@@ -259,12 +280,16 @@ async def get_artist_report(request: ArtistRequest):
             _resolve_songstats(client, resolved_name, ss_key),
         )
 
-    # Step 3: score
+        # Step 3: artist thumbnail from highest-rated track's Spotify album art
+        artist_image_url = await _fetch_artist_image(client, tracks)
+
+    # Step 4: score
     scored = compute_discoverability_score(artist, tracks, raw_stats)
 
     return {
         "artist_name": resolved_name,
         "artist_id": artist_id,
+        "artist_image_url": artist_image_url,
         "total_tracks": len(tracks),
         "overall_score": scored["overall_score"],
         "overall_status": scored["overall_status"],
