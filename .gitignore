@@ -47,3 +47,7 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# discoverability-check runtime data
+discoverability-check/search_history.json
+discoverability-check/search_history.json.tmp

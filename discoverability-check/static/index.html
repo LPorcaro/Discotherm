@@ -113,6 +113,47 @@
     }
     input[type="text"]::placeholder { color: var(--muted2); }
     input[type="text"]:focus { border-color: var(--cyan); }
+
+    /* ── Recently searched (persistent chip row under the search box) ── */
+    .recent {
+      margin-top: 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    .recent[hidden] { display: none; }
+    .recent-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted2);
+    }
+    .recent-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+    }
+    .recent-chip {
+      font-family: 'Inter', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--text);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+      white-space: nowrap;
+    }
+    .recent-chip:hover {
+      border-color: var(--cyan);
+      color: var(--cyan);
+      background: var(--cyan-dim);
+    }
     button {
       background: var(--cyan);
       border: none;
@@ -559,6 +600,11 @@
           <button id="submit-btn">Run Report</button>
         </div>
       </div>
+
+      <div class="recent" id="recent" hidden>
+        <span class="recent-label">Recently searched</span>
+        <div class="recent-chips" id="recent-chips"></div>
+      </div>
     </div>
 
     <div class="loading" id="loading">
@@ -998,6 +1044,9 @@
 
         setVisible(results, true);
         pinHeroToTop();
+
+        // Record this successful search, then refresh the recent chips (fire-and-forget).
+        recordSearch(data.artist_name);
       } catch (err) {
         errBox.textContent = 'Network error — is the server running?';
         setVisible(errBox, true);
@@ -1036,6 +1085,55 @@
 
     btn.addEventListener('click', runReport);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') runReport(); });
+
+    // ── Recently searched ──
+    const recentBox   = document.getElementById('recent');
+    const recentChips = document.getElementById('recent-chips');
+
+    function renderRecent(history) {
+      recentChips.innerHTML = '';
+      if (!history || history.length === 0) {
+        recentBox.hidden = true;
+        if (!heroPinned) centerHero();
+        return;
+      }
+      history.forEach(item => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'recent-chip';
+        chip.textContent = item.artist_name;
+        chip.addEventListener('click', () => {
+          input.value = item.artist_name;
+          runReport();
+        });
+        recentChips.appendChild(chip);
+      });
+      recentBox.hidden = false;
+      // Hero grew/shrank; re-center while still on the landing screen.
+      if (!heroPinned) centerHero();
+    }
+
+    async function loadRecent() {
+      try {
+        const res = await fetch('/search-history');
+        if (!res.ok) return;
+        const data = await res.json();
+        renderRecent(data.history || []);
+      } catch (_) { /* non-critical: silently skip the chips if history is unavailable */ }
+    }
+
+    async function recordSearch(name) {
+      try {
+        await fetch('/search-history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ artist_name: name }),
+        });
+        await loadRecent();
+      } catch (_) { /* non-critical */ }
+    }
+
+    loadRecent();
   </script>
 </body>
 </html>

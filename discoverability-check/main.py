@@ -1,8 +1,10 @@
 import os
 import re
+import json
 import asyncio
 import logging
 import unicodedata
+from threading import Lock
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, APIRouter, Request, Response
 from fastapi.responses import JSONResponse
@@ -698,6 +700,67 @@ async def _build_artist_report(name: str) -> dict:
         },
         "note": "stream_concentration uses num_favourite as proxy — not actual stream counts",
     }
+
+
+_HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "search_history.json")
+_HISTORY_CAP = 20  # keep at most this many raw entries on disk
+_history_lock = Lock()
+
+
+class SearchHistoryRequest(BaseModel):
+    artist_name: str
+
+
+def _read_history() -> list[dict]:
+    try:
+        with open(_HISTORY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return [e for e in data if isinstance(e, dict)]
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def _write_history(entries: list[dict]) -> None:
+    tmp = f"{_HISTORY_PATH}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(entries, f)
+    os.replace(tmp, _HISTORY_PATH)  # atomic swap so concurrent reads never see a half-written file
+
+
+@router.post("/search-history")
+async def add_search_history(request: SearchHistoryRequest):
+    name = request.artist_name.strip()
+    if not name:
+        return {"ok": False}
+    entry = {"artist_name": name, "timestamp": datetime.now(timezone.utc).isoformat()}
+    with _history_lock:
+        entries = _read_history()
+        entries.append(entry)
+        _write_history(entries[-_HISTORY_CAP:])
+    return {"ok": True}
+
+
+@router.get("/search-history")
+async def get_search_history():
+    with _history_lock:
+        entries = _read_history()
+    seen: set[str] = set()
+    out: list[dict] = []
+    # Walk newest → oldest so the first occurrence we keep is the most recent one.
+    for e in reversed(entries):
+        nm = (e.get("artist_name") or "").strip()
+        if not nm:
+            continue
+        key = nm.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"artist_name": nm, "timestamp": e.get("timestamp")})
+        if len(out) >= 10:
+            break
+    return {"history": out}
 
 
 @router.post("/artist/report")
