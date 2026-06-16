@@ -322,6 +322,21 @@
       letter-spacing: 0.06em;
     }
 
+    .diag-calc { margin-top: 2px; }
+    .diag-calc summary {
+      cursor: pointer;
+      font-size: 0.75rem;
+      color: var(--muted);
+      list-style: none;
+      user-select: none;
+      width: fit-content;
+    }
+    .diag-calc summary::-webkit-details-marker { display: none; }
+    .diag-calc summary::before { content: '▸ '; font-size: 0.7rem; }
+    .diag-calc[open] summary::before { content: '▾ '; }
+    .diag-calc summary:hover { color: var(--text); }
+    .diag-calc[open] summary { margin-bottom: 10px; }
+
     .diag-rec {
       font-size: 0.82rem;
       color: var(--muted);
@@ -416,29 +431,44 @@
       return String(val);
     }
 
+    const DETAIL_LABELS = {
+      tracks_total:              'Total Tracks',
+      tracks_with_full_metadata: 'Full Metadata',
+      total_favourites:          'Total Saves',
+      top3_favourites:           'Top-3 Saves',
+      concentration_pct:         'Concentration',
+      playlists_total:           'Total Playlists',
+      playlists_editorial:       'Editorial',
+      editorial_pct:             'Editorial %',
+    };
+    // Internal calculation breakdown — hidden behind a toggle, not shown by default.
+    const DEBUG_LABELS = {
+      pct_component: 'Percentage score',
+      abs_component: 'Absolute reach score',
+    };
+
+    function statHTML(k, v, label) {
+      const display = k.endsWith('_pct')
+        ? (typeof v === 'number' ? v.toFixed(2) + '%' : v)
+        : fmt(v);
+      return `<div class="diag-stat">
+        <span class="diag-stat-val">${display}</span>
+        <span class="diag-stat-key">${label}</span>
+      </div>`;
+    }
+
     function detailRows(detail) {
-      const LABELS = {
-        tracks_total:              'Total Tracks',
-        tracks_with_full_metadata: 'Full Metadata',
-        total_favourites:          'Total Saves',
-        top3_favourites:           'Top-3 Saves',
-        concentration_pct:         'Concentration',
-        playlists_total:           'Total Playlists',
-        playlists_editorial:       'Editorial',
-        editorial_pct:             'Editorial %',
-      };
       return Object.entries(detail)
-        .filter(([, v]) => v != null)
-        .map(([k, v]) => {
-          const label = LABELS[k] || k;
-          const display = k.endsWith('_pct')
-            ? (typeof v === 'number' ? v.toFixed(2) + '%' : v)
-            : fmt(v);
-          return `<div class="diag-stat">
-            <span class="diag-stat-val">${display}</span>
-            <span class="diag-stat-key">${label}</span>
-          </div>`;
-        }).join('');
+        .filter(([k, v]) => v != null && !(k in DEBUG_LABELS))
+        .map(([k, v]) => statHTML(k, v, DETAIL_LABELS[k] || k))
+        .join('');
+    }
+
+    function debugRows(detail) {
+      return Object.entries(detail)
+        .filter(([k, v]) => v != null && (k in DEBUG_LABELS))
+        .map(([k, v]) => statHTML(k, v, DEBUG_LABELS[k]))
+        .join('');
     }
 
     function renderDiagnostic(d) {
@@ -456,6 +486,10 @@
             <div class="diag-bar-fill ${sc}" style="width:${d.score}%"></div>
           </div>
           ${d.detail ? `<div class="diag-details">${detailRows(d.detail)}</div>` : ''}
+          ${d.detail && debugRows(d.detail) ? `<details class="diag-calc">
+            <summary>Show calculation details</summary>
+            <div class="diag-details">${debugRows(d.detail)}</div>
+          </details>` : ''}
           <p class="diag-rec">${d.recommendation}</p>
         </div>`;
     }
