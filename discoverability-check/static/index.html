@@ -194,6 +194,69 @@
     }
     .touring-badge.show { display: inline-flex; }
 
+    /* ── Songstats stat chips ── */
+    .stat-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .stat-chip {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      flex: 1 1 120px;
+      min-width: 110px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.16,1,0.3,1);
+    }
+    .stat-chip.in { opacity: 1; transform: translateY(0); }
+    .stat-chip-val {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-chip-key {
+      font-size: 0.68rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* ── Fan-engagement callout (highlighted banner, distinct from diagnostic cards) ── */
+    .fan-callout {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 18px;
+      border-radius: 14px;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      color: var(--text);
+      background: linear-gradient(135deg,
+        color-mix(in srgb, var(--cyan) 14%, transparent),
+        color-mix(in srgb, var(--cyan) 4%, transparent));
+      border: 1px solid color-mix(in srgb, var(--cyan) 30%, transparent);
+      border-left: 3px solid var(--cyan);
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.16,1,0.3,1);
+    }
+    .fan-callout.show { display: flex; }
+    .fan-callout.in { opacity: 1; transform: translateY(0); }
+    .fan-callout .fan-icon { font-size: 1.4rem; flex-shrink: 0; line-height: 1; }
+    .fan-callout b { color: var(--cyan); font-weight: 800; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .stat-chip, .fan-callout { transition: none; }
+    }
+
     /* ── Score thermometer ── */
     .score-card {
       background: var(--surface);
@@ -442,6 +505,10 @@
         <button id="pdf-btn" class="btn-secondary" type="button">📄 Download PDF Report</button>
       </div>
 
+      <div class="stat-chips" id="res-stat-chips"></div>
+
+      <div class="fan-callout" id="res-fan-callout"></div>
+
       <div class="score-card">
         <div class="score-top">
           <span class="score-label">Overall Score</span>
@@ -476,6 +543,58 @@
 
     function statusClass(status) {
       return { good: 'good', warning: 'warning', critical: 'critical' }[status] || 'warning';
+    }
+
+    // Compact number formatter: 14796537 → "14.8M", 2609194 → "2.6M", 625 → "625".
+    function compactNum(n) {
+      if (n == null || isNaN(Number(n))) return null;
+      n = Number(n);
+      const fmt = (v, suf) => (v >= 100 ? String(Math.round(v)) : v.toFixed(1).replace(/\.0$/, '')) + suf;
+      if (n >= 1e9) return fmt(n / 1e9, 'B');
+      if (n >= 1e6) return fmt(n / 1e6, 'M');
+      if (n >= 1e3) return fmt(n / 1e3, 'K');
+      return String(Math.round(n));
+    }
+
+    // Build the Songstats stat chips (monthly listeners / followers / popularity). Chips with
+    // no data are skipped. Returns the freshly-created chip elements (for the reveal stagger).
+    function renderStatChips(chips) {
+      const defs = [
+        ['monthly_listeners', 'Monthly Listeners', true],
+        ['followers', 'Followers', true],
+        ['popularity', 'Popularity', false],
+      ];
+      const host = document.getElementById('res-stat-chips');
+      host.innerHTML = defs.map(([key, label, compact]) => {
+        const raw = chips ? chips[key] : null;
+        if (raw == null) return '';
+        const val = compact ? compactNum(raw) : String(raw);
+        if (val == null) return '';
+        return `<div class="stat-chip"><span class="stat-chip-val">${val}</span>` +
+               `<span class="stat-chip-key">${label}</span></div>`;
+      }).join('');
+      return Array.from(host.querySelectorAll('.stat-chip'));
+    }
+
+    // Fan-engagement callout — only shown when TikTok creates and/or Shazams are > 0.
+    function renderFanCallout(fe) {
+      const el = document.getElementById('res-fan-callout');
+      el.classList.remove('in');
+      const tk = fe && Number(fe.tiktok_creates) > 0 ? Number(fe.tiktok_creates) : 0;
+      const sz = fe && Number(fe.shazam_count) > 0 ? Number(fe.shazam_count) : 0;
+      if (!tk && !sz) {
+        el.classList.remove('show');
+        el.innerHTML = '';
+        el.style.transitionDelay = '';
+        return false;
+      }
+      const parts = [];
+      if (tk) parts.push(`<b>${compactNum(tk)}</b> TikTok creates`);
+      if (sz) parts.push(`<b>${compactNum(sz)}</b> Shazams`);
+      el.innerHTML = `<span class="fan-icon">🎵</span>` +
+        `<span>${parts.join(' and ')} show real fans are actively engaging with this music.</span>`;
+      el.classList.add('show');
+      return true;
     }
 
     /* ── Score count-up animation helpers (plain rAF + CSS, no libraries) ── */
@@ -709,6 +828,26 @@
           touringEl.classList.remove('show');
         }
 
+        // ── Stat chips + fan-engagement callout ──
+        // Reveal staggered right after the header; the thermometer count-up below is delayed
+        // (thermoDelay) so it only begins once the chips have started animating in.
+        const chipEls = renderStatChips(data.stat_chips);
+        const calloutShown = renderFanCallout(data.fan_engagement);
+        const calloutEl = document.getElementById('res-fan-callout');
+        const CHIP_START = 120, CHIP_STEP = 90;
+        const thermoDelay = CHIP_START + chipEls.length * CHIP_STEP + (calloutShown ? 160 : 60);
+        if (prefersReducedMotion()) {
+          chipEls.forEach(el => el.classList.add('in'));
+          if (calloutShown) calloutEl.classList.add('in');
+        } else {
+          chipEls.forEach((el, i) => { el.style.transitionDelay = `${CHIP_START + i * CHIP_STEP}ms`; });
+          if (calloutShown) calloutEl.style.transitionDelay = `${CHIP_START + chipEls.length * CHIP_STEP}ms`;
+          requestAnimationFrame(() => {
+            chipEls.forEach(el => el.classList.add('in'));
+            if (calloutShown) calloutEl.classList.add('in');
+          });
+        }
+
         // Overall score
         const sc = statusClass(data.overall_status);
         const scoreEl  = document.getElementById('res-score-number');
@@ -733,6 +872,7 @@
         thermoEl.style.background = rgb(scoreColor(0));
         animateProgress({
           duration: 1200,
+          delay: thermoDelay,
           onFrame: (e) => {
             const v = e * scoreTarget;
             const col = rgb(scoreColor(v));
@@ -765,7 +905,7 @@
           const target = parseFloat(numEl.dataset.target) || 0;
           animateProgress({
             duration: 600,
-            delay: i * 100,
+            delay: thermoDelay + 250 + i * 100,
             onFrame: (e) => {
               const v = e * target;
               numEl.textContent = Math.round(v);

@@ -517,7 +517,8 @@ def _mood_coherence(track_moods: list[list[str]], skipped: int) -> dict:
 # Target platforms and chosen activity thresholds (field → why):
 #   spotify     monthly_listeners_current > 0  — live listening audience
 #   apple_music playlists_total          > 0  — appears in Apple's playlist graph
-#   tiktok      videos_total             > 0  — tracks/sounds being created with
+#   tiktok      followers_total/profile_videos_total > 0 — OFFICIAL artist presence
+#               (fan-created videos_total is tracked separately as a fan-engagement signal)
 #   youtube     video_views_total        > 0  — watched video presence
 #   shazam      shazams_total            > 0  — being Shazam'd (ambient discovery)
 #   deezer      followers_total          > 0  — an actual Deezer following
@@ -548,14 +549,33 @@ def _platform_gap(stats: dict, logger=None) -> dict:
     inactive: list[str] = []
     missing: list[str] = []     # target platforms Songstats didn't return at all
 
+    # TikTok is special-cased: "active" means the ARTIST has an official platform presence
+    # (followers / posted profile videos), NOT merely that fans have made videos with the
+    # music. videos_total (fan "creates") is captured separately so the recommendation can
+    # distinguish "no presence at all" from "fans are already creating, but it isn't
+    # converting into platform-level discovery".
+    tiktok = stats.get("tiktok") if isinstance(stats.get("tiktok"), dict) else {}
+    tiktok_creates = tiktok.get("videos_total") or 0
+    if not isinstance(tiktok_creates, (int, float)):
+        tiktok_creates = 0
+
     for source_key, field, display, _role in PLATFORM_GAP_TARGETS:
         data = stats.get(source_key)
         if not isinstance(data, dict):
             missing.append(display)
             continue
         available.append(display)
-        value = data.get(field) or 0
-        if isinstance(value, (int, float)) and value > 0:
+        if source_key == "tiktok":
+            followers = data.get("followers_total") or 0
+            profile_videos = data.get("profile_videos_total") or 0
+            is_active = (
+                (isinstance(followers, (int, float)) and followers > 0)
+                or (isinstance(profile_videos, (int, float)) and profile_videos > 0)
+            )
+        else:
+            value = data.get(field) or 0
+            is_active = isinstance(value, (int, float)) and value > 0
+        if is_active:
             active.append(display)
         else:
             inactive.append(display)
@@ -596,6 +616,15 @@ def _platform_gap(stats: dict, logger=None) -> dict:
         status = "critical"
 
     role_map = {d: role for _k, _f, d, role in PLATFORM_GAP_TARGETS}
+    # When TikTok is inactive (no official artist presence) but fans are already making
+    # videos with the music, swap the generic "seed a TikTok sound from zero" guidance for
+    # an amplify-existing-fan-content message.
+    if "TikTok" in inactive and tiktok_creates > 0:
+        role_map["TikTok"] = (
+            f"fans have already made {int(tiktok_creates):,} videos with this music, but it "
+            "isn't translating into platform-level discovery signals — work with a music "
+            "marketing team to amplify existing fan content rather than starting from zero"
+        )
     if inactive:
         gaps = "; ".join(f"{name} — {role_map[name]}" for name in inactive)
         gap_sentence = (

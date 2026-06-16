@@ -672,6 +672,12 @@ async def _build_artist_report(name: str) -> dict:
     # Step 4: score
     scored = compute_discoverability_score(artist, tracks, raw_stats, mood_data, logger=logger)
 
+    # Headline Songstats numbers surfaced to the UI (chips + fan-engagement callout). Each
+    # guarded for shape — Songstats omits whole source blocks for some artists.
+    spotify = raw_stats.get("spotify") if isinstance(raw_stats.get("spotify"), dict) else {}
+    tiktok = raw_stats.get("tiktok") if isinstance(raw_stats.get("tiktok"), dict) else {}
+    shazam = raw_stats.get("shazam") if isinstance(raw_stats.get("shazam"), dict) else {}
+
     return {
         "artist_name": resolved_name,
         "artist_id": artist_id,
@@ -681,6 +687,15 @@ async def _build_artist_report(name: str) -> dict:
         "overall_status": scored["overall_status"],
         "diagnostics": scored["diagnostics"],
         "touring_context": touring_context,
+        "stat_chips": {
+            "monthly_listeners": spotify.get("monthly_listeners_current"),
+            "followers": spotify.get("followers_total"),
+            "popularity": spotify.get("popularity_current"),
+        },
+        "fan_engagement": {
+            "tiktok_creates": tiktok.get("videos_total"),
+            "shazam_count": shazam.get("shazams_total"),
+        },
         "note": "stream_concentration uses num_favourite as proxy — not actual stream counts",
     }
 
