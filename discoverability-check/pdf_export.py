@@ -136,7 +136,7 @@ def generate_report_pdf(report: dict, image_bytes: bytes | None = None) -> bytes
     header_left = [
         Paragraph(artist_name, h_artist),
         Spacer(1, 2),
-        Paragraph("Discotherm", h_sub),
+        Paragraph('<font color="#0f172a">Disco</font><font color="#22d3ee">therm</font>', h_sub),
         Paragraph(f"Generated {generated}", h_sub),
     ]
     thumb = None
