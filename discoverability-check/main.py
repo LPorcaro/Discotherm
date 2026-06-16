@@ -76,17 +76,69 @@ async def fetch_track_page(client: httpx.AsyncClient, artist_id: int, page: int,
     return mxm_body(resp.json()).get("track_list", [])
 
 
-async def _probe_artist_tracks(client: httpx.AsyncClient, artist_id: int, mxm_key: str) -> bool:
-    """Lightweight check (page_size=1) of whether f_artist_id returns any tracks."""
+async def _probe_artist_track_count(client: httpx.AsyncClient, artist_id: int, mxm_key: str) -> int:
+    """Return Musixmatch's reported total track count for an f_artist_id filter (0 on error).
+
+    Uses message.header.available (the total result count) via a single page_size=1 request,
+    so we get the true catalogue size of each candidate without paginating. This lets the
+    caller pick the highest-volume record among same-name duplicates rather than merely the
+    first record that happens to have any track at all.
+    """
     try:
         resp = await client.get(
             f"{MUSIXMATCH_BASE}/track.search",
             params={"f_artist_id": artist_id, "page_size": 1, "page": 1, "apikey": mxm_key},
         )
         resp.raise_for_status()
-        return bool(mxm_body(resp.json()).get("track_list", []))
+        j = resp.json()
+        available = j.get("message", {}).get("header", {}).get("available")
+        if isinstance(available, int):
+            return available
+        return len(mxm_body(j).get("track_list", []))
     except (httpx.HTTPError, ValueError):
-        return False
+        return 0
+
+
+def _norm(name: str) -> str:
+    return (name or "").strip().lower()
+
+
+async def _candidate_ids_from_tracks(
+    client: httpx.AsyncClient, query: str, mxm_key: str, pages: int = 2
+) -> dict[int, str]:
+    """Map artist_id -> artist_name for artists surfaced in track.search?q_artist results.
+
+    artist.search frequently omits an artist's real high-volume catalogue record from its
+    first page (e.g. Taylor Swift's 738-track record id=259675 is buried behind a dozen
+    1-track duplicates). But that record's tracks dominate a rating-sorted track.search for
+    the same name, so mining the top tracks reliably surfaces the canonical artist_id that
+    artist.search misses. Returns {} on any error (caller still has artist.search results).
+    """
+    ids: dict[int, str] = {}
+    try:
+        resps = await asyncio.gather(
+            *[
+                client.get(
+                    f"{MUSIXMATCH_BASE}/track.search",
+                    params={"q_artist": query, "s_track_rating": "desc",
+                            "page_size": PAGE_SIZE, "page": p, "apikey": mxm_key},
+                )
+                for p in range(1, pages + 1)
+            ]
+        )
+    except httpx.HTTPError:
+        return ids
+    for resp in resps:
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            continue
+        for t in mxm_body(resp.json()).get("track_list", []):
+            tr = t.get("track", {})
+            aid = tr.get("artist_id")
+            if aid and aid not in ids:
+                ids[aid] = tr.get("artist_name", "")
+    return ids
 
 
 async def _resolve_artist_records(
@@ -96,38 +148,62 @@ async def _resolve_artist_records(
 
     Musixmatch splits a single real artist across many duplicate records that share the
     exact same name: homonyms (two "i cani", one empty) AND fragmentation (Katy Perry's
-    catalogue is spread over 25+ records, one with 238 tracks, most with 0-1). So we:
-      1. artist.search a wide page (to surface fragmented records),
-      2. probe every candidate's f_artist_id for tracks (page_size=1),
-      3. pick a canonical record (first probed candidate that has tracks — used for the
-         display name/image),
-      4. aggregate over every record whose name *exactly* matches the canonical name AND
-         has tracks. Exact-name matching excludes "feat./variant" acts (e.g. "I CANI DEL
-         DISAGIO") so f_artist_id stays precise.
+    catalogue is spread over 25+ records, one with 238 tracks, most with 0-1). Worse, the
+    real high-volume record is often missing entirely from artist.search's first page, so
+    relying on artist.search alone yields a tiny ghost catalogue. So we:
+      1. Build a candidate pool from TWO sources: artist.search (fragmented same-name
+         duplicates) AND the artist_ids mined from a rating-sorted track.search?q_artist
+         (which surfaces the real record artist.search omits).
+      2. Probe EVERY candidate's true track count via f_artist_id (header.available).
+      3. Pick the canonical as the HIGHEST-track-count record *whose name exactly matches
+         the query* — the exact-name filter is essential because fuzzy track.search also
+         surfaces unrelated high-volume artists (e.g. "Katy Perry" pulls in Pat Boone /
+         Bob Marley with far larger catalogues). Fall back to the global max, then to the
+         first candidate, when nothing matches the query name.
+      4. Aggregate over every record whose name *exactly* matches the canonical name AND
+         has tracks, so fragmented same-name records are merged while "feat./variant" acts
+         (e.g. "Taylor Swift feat. Bon Iver") stay excluded.
 
-    Returns (canonical_artist, artist_ids_to_fetch). artist_ids_to_fetch falls back to the
-    canonical id when no record has tracks. Returns (None, []) when nothing is found.
+    Returns (canonical_artist, artist_ids_to_fetch). Returns (None, []) when nothing found.
     """
-    resp = await client.get(
-        f"{MUSIXMATCH_BASE}/artist.search",
-        params={"q_artist": query, "page_size": ARTIST_SEARCH_PAGE_SIZE, "page": 1, "apikey": mxm_key},
+    artist_resp, track_ids = await asyncio.gather(
+        client.get(
+            f"{MUSIXMATCH_BASE}/artist.search",
+            params={"q_artist": query, "page_size": ARTIST_SEARCH_PAGE_SIZE, "page": 1, "apikey": mxm_key},
+        ),
+        _candidate_ids_from_tracks(client, query, mxm_key),
     )
-    resp.raise_for_status()
-    artist_list = mxm_body(resp.json()).get("artist_list", [])
+    artist_resp.raise_for_status()
+    artist_list = mxm_body(artist_resp.json()).get("artist_list", [])
     candidates = [a["artist"] for a in artist_list if a.get("artist")]
+
+    # Merge in track-search-surfaced ids not already present, as minimal {id, name} records.
+    seen = {c["artist_id"] for c in candidates}
+    for aid, name in track_ids.items():
+        if aid not in seen:
+            candidates.append({"artist_id": aid, "artist_name": name})
+            seen.add(aid)
+
     if not candidates:
         return None, []
 
-    probes = await asyncio.gather(
-        *[_probe_artist_tracks(client, a["artist_id"], mxm_key) for a in candidates]
+    counts = await asyncio.gather(
+        *[_probe_artist_track_count(client, c["artist_id"], mxm_key) for c in candidates]
     )
-    canonical = next((c for c, has in zip(candidates, probes) if has), candidates[0])
-    canon_name = canonical["artist_name"].lower()
+
+    q = _norm(query)
+    # Prefer the highest-volume record whose name exactly matches the query (this is the real
+    # artist); the exact-name gate keeps fuzzy track.search homonyms from hijacking selection.
+    name_matched = [i for i in range(len(candidates)) if _norm(candidates[i]["artist_name"]) == q]
+    pool = name_matched if any(counts[i] > 0 for i in name_matched) else range(len(candidates))
+    best_idx = max(pool, key=lambda i: counts[i])
+    canonical = candidates[best_idx] if counts[best_idx] > 0 else candidates[0]
+    canon_name = _norm(canonical["artist_name"])
 
     artist_ids = [
         c["artist_id"]
-        for c, has in zip(candidates, probes)
-        if has and c["artist_name"].lower() == canon_name
+        for c, n in zip(candidates, counts)
+        if n > 0 and _norm(c["artist_name"]) == canon_name
     ]
     if not artist_ids:
         artist_ids = [canonical["artist_id"]]

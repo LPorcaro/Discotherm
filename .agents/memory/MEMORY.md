@@ -1,3 +1,4 @@
 - [Python app routing](python-app-routing.md) — non-Node apps can't use the preview/router here; reach them via `${REPLIT_DEV_DOMAIN}:PORT` explicit-port link.
 - [Musixmatch moods API](musixmatch-moods-api.md) — `track.lyrics.analysis.get` returns only an ordered `main_moods` string list (no values); vocab differs from the "25 labels" spec.
+- [Musixmatch artist disambiguation](musixmatch-artist-disambiguation.md) — artist.search often omits the real high-volume record; mine track.search?q_artist + exact-name gate to find the right artist_id.
 - [API key log-leak vectors](apikey-log-leak-vectors.md) — keys ride in `apikey=` query params; need BOTH httpx INFO→WARNING AND a type-specific httpx.HTTPError handler (catch-all Exception re-raises → leaks traceback).
