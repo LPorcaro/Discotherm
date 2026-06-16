@@ -8,6 +8,8 @@ Usage:
 
 from __future__ import annotations
 
+import math
+
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, value))
@@ -96,17 +98,26 @@ def _stream_concentration(tracks: list[dict]) -> dict:
     favs = [t.get("num_favourite", 0) or 0 for t in tracks]
     total_favs = sum(favs)
 
-    if total_favs == 0:
-        # No favourite data — score neutral rather than punishing
+    if total_favs < 20:
+        # Sample too small to compute a meaningful concentration ratio.
+        sorted_favs = sorted(favs, reverse=True)
+        top3_favs = sum(sorted_favs[:3])
         return {
             "name": "STREAM_CONCENTRATION",
             "score": 50,
-            "status": "warning",
-            "detail": {"total_favourites": 0, "top3_favourites": 0, "concentration_pct": None},
+            "status": "insufficient_data",
+            "detail": {
+                "tracks_total": len(tracks),
+                "total_favourites": total_favs,
+                "top3_favourites": top3_favs,
+                "concentration_pct": None,
+            },
             "recommendation": (
-                "Favourite counts are unavailable for this catalogue. "
-                "Pitch tracks to playlist curators across the full catalogue, "
-                "not just the top releases, to build tail visibility."
+                f"Only {total_favs} total favourites across the catalogue — the sample size "
+                "is too small to reliably assess stream concentration. This metric becomes "
+                "meaningful once the catalogue has accumulated more listener saves; revisit "
+                "it then. In the meantime, focus on driving saves through playlist pitching "
+                "and social campaigns across the full catalogue."
             ),
         }
 
@@ -178,32 +189,50 @@ def _playlist_reach(stats: dict) -> dict:
         }
 
     editorial_pct = (editorial / total) * 100
-    # 10 % editorial ratio → score 100 (generous scale reflecting how rare high ratios are)
-    score = round(_clamp(editorial_pct * 10))
+    # Blend two signals so a massive catalogue with large absolute editorial reach
+    # is not penalised the same as a tiny one just because the *ratio* is low:
+    #   - relative component: 10 % editorial ratio → 100 (rare, so generous scale)
+    #   - absolute component: log-scaled count, 1000 editorial playlists → 100
+    pct_component = min(editorial_pct * 10, 100)
+    abs_component = min(math.log10(editorial + 1) / math.log10(1000) * 100, 100)
+    score = round(_clamp(0.5 * pct_component + 0.5 * abs_component))
 
     if score >= 60:
         rec = (
-            f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%). "
-            "Strong editorial presence — sustain it by submitting every new release to "
-            "Spotify editorial at least 7 days before release and maintaining release "
-            "cadence to stay in the algorithm."
+            f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%), "
+            f"a strong editorial footprint in both absolute ({editorial} placements) and "
+            "relative terms. Sustain it by submitting every new release to Spotify editorial "
+            "at least 7 days before release and maintaining release cadence to stay in the "
+            "algorithm."
         )
     elif score >= 30:
         rec = (
             f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%). "
-            "There is some editorial coverage, but most placements are organic. "
-            "Increase pitching frequency: submit every track (not just singles) to "
-            "Spotify for Artists editorial, and work with your label or distributor "
-            "on personalised playlist outreach."
+            f"With {editorial} editorial placements there is meaningful absolute reach, but "
+            "most of the catalogue's playlist presence is organic. Increase pitching "
+            "frequency: submit every track (not just singles) to Spotify for Artists "
+            "editorial, and work with your label or distributor on personalised playlist "
+            "outreach."
+        )
+    elif editorial >= 50:
+        # Critical-but-large: genuinely large absolute editorial reach, low ratio.
+        rec = (
+            f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%). "
+            f"Despite strong absolute editorial reach ({editorial} placements), organic "
+            "placements dominate the catalogue, so the editorial share is low. Protect the "
+            "editorial relationships you have and keep pitching new releases early, while "
+            "auditing whether the large organic footprint reflects healthy fan-driven "
+            "playlisting or low-quality adds that dilute the ratio."
         )
     else:
+        # Critical-and-small: weak in both absolute and relative terms.
         rec = (
-            f"Only {editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%). "
-            "The artist is almost entirely reliant on organic playlist adds. "
-            "Prioritise Spotify for Artists editorial pitches for every upcoming release, "
-            "engage a playlist plugger, and investigate whether metadata issues "
-            "(genre tags, mood tags, release date accuracy) are reducing editorial "
-            "algorithmic eligibility."
+            f"Only {editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%) "
+            f"— minimal editorial reach in both absolute ({editorial} placements) and relative "
+            "terms. The artist is almost entirely reliant on organic playlist adds. Prioritise "
+            "Spotify for Artists editorial pitches for every upcoming release, engage a "
+            "playlist plugger, and investigate whether metadata issues (genre tags, mood tags, "
+            "release date accuracy) are reducing editorial algorithmic eligibility."
         )
 
     return {
@@ -214,6 +243,8 @@ def _playlist_reach(stats: dict) -> dict:
             "playlists_total": total,
             "playlists_editorial": editorial,
             "editorial_pct": round(editorial_pct, 4),
+            "pct_component": round(pct_component, 2),
+            "abs_component": round(abs_component, 2),
         },
         "recommendation": rec,
     }
