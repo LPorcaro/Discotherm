@@ -1,0 +1,1 @@
+- [Python app routing](python-app-routing.md) — non-Node apps can't use the preview/router here; reach them via `${REPLIT_DEV_DOMAIN}:PORT` explicit-port link.

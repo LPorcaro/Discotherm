@@ -10,7 +10,7 @@ from scoring import compute_discoverability_score
 
 load_dotenv()
 
-BASE_PATH = "/discoverability-check"
+BASE_PATH = ""
 
 app = FastAPI(title="Discoverability Check")
 router = APIRouter()
@@ -121,7 +121,7 @@ async def get_artist(request: ArtistRequest):
         # NOTE: artist.albums.get and album.tracks.get require a paid Musixmatch plan
         # and return empty on the free tier. track.search is the deepest available endpoint.
         pages = await asyncio.gather(
-            *[fetch_track_page(client, request.name, p, api_key) for p in range(1, PAGES_TO_FETCH + 1)],
+            *[fetch_track_page(client, artist["artist_name"], p, api_key) for p in range(1, PAGES_TO_FETCH + 1)],
             return_exceptions=True,
         )
 
@@ -255,7 +255,7 @@ async def get_artist_report(request: ArtistRequest):
 
         # Step 2: track fetch + Songstats stats concurrently
         tracks, raw_stats = await asyncio.gather(
-            _resolve_tracks(client, request.name, exact_name, mxm_key),
+            _resolve_tracks(client, resolved_name, exact_name, mxm_key),
             _resolve_songstats(client, resolved_name, ss_key),
         )
 
@@ -274,4 +274,4 @@ async def get_artist_report(request: ArtistRequest):
 
 
 app.include_router(router, prefix=BASE_PATH)
-app.mount(BASE_PATH, StaticFiles(directory="static", html=True), name="static")
+app.mount(BASE_PATH or "/", StaticFiles(directory="static", html=True), name="static")

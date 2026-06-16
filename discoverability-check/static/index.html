@@ -456,7 +456,7 @@
       loadMsg.textContent = 'Fetching data from Musixmatch & Songstats…';
 
       try {
-        const res = await fetch('/discoverability-check/artist/report', {
+        const res = await fetch('/artist/report', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name }),
