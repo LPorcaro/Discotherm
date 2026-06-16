@@ -387,6 +387,138 @@ def _mood_coherence(track_moods: list[list[str]], skipped: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Diagnostic 5 — PLATFORM_GAP
+# Measures how broadly the artist is actually *active* across the major
+# discovery surfaces, using the Songstats raw_stats already fetched. We only
+# score platforms that Songstats actually returned for this artist; for each we
+# define a "meaningful activity" threshold against whatever field best signals
+# real presence (not just catalogue existence). Score = active / available.
+#
+# Target platforms and chosen activity thresholds (field → why):
+#   spotify     monthly_listeners_current > 0  — live listening audience
+#   apple_music playlists_total          > 0  — appears in Apple's playlist graph
+#   tiktok      videos_total             > 0  — tracks/sounds being created with
+#   youtube     video_views_total        > 0  — watched video presence
+#   shazam      shazams_total            > 0  — being Shazam'd (ambient discovery)
+#   deezer      followers_total          > 0  — an actual Deezer following
+#   soundcloud  streams_total            > 0  — real plays on SoundCloud
+# ---------------------------------------------------------------------------
+# (raw_stats source key, activity field, display name, discovery role for recs)
+PLATFORM_GAP_TARGETS = [
+    ("spotify", "monthly_listeners_current", "Spotify",
+     "build monthly listeners through release cadence and editorial pitching"),
+    ("apple_music", "playlists_total", "Apple Music",
+     "pursue Apple Music editorial playlist placements for curated discovery"),
+    ("tiktok", "videos_total", "TikTok",
+     "seed the catalogue as a TikTok sound to chase viral, creator-driven reach"),
+    ("youtube", "video_views_total", "YouTube",
+     "publish/claim official and Shorts content to capture search and recommendation traffic"),
+    ("shazam", "shazams_total", "Shazam",
+     "drive radio/sync/ambient plays so listeners Shazam the tracks they hear"),
+    ("deezer", "followers_total", "Deezer",
+     "grow a Deezer following and pitch its editorial playlists, especially in EU markets"),
+    ("soundcloud", "streams_total", "SoundCloud",
+     "upload and engage on SoundCloud to tap its early-adopter and remix discovery culture"),
+]
+
+
+def _platform_gap(stats: dict, logger=None) -> dict:
+    available: list[str] = []   # display names present in raw_stats
+    active: list[str] = []
+    inactive: list[str] = []
+    missing: list[str] = []     # target platforms Songstats didn't return at all
+
+    for source_key, field, display, _role in PLATFORM_GAP_TARGETS:
+        data = stats.get(source_key)
+        if not isinstance(data, dict):
+            missing.append(display)
+            continue
+        available.append(display)
+        value = data.get(field) or 0
+        if isinstance(value, (int, float)) and value > 0:
+            active.append(display)
+        else:
+            inactive.append(display)
+
+    # Surface Songstats' real coverage gaps in the logs.
+    if missing and logger is not None:
+        logger.info(
+            "PLATFORM_GAP: %d/%d target platforms missing entirely from Songstats "
+            "raw_stats: %s", len(missing), len(PLATFORM_GAP_TARGETS), ", ".join(missing)
+        )
+
+    total = len(available)
+    if total == 0:
+        return {
+            "name": "PLATFORM_GAP",
+            "score": 50,
+            "status": "insufficient_data",
+            "detail": {
+                "platforms_checked": [],
+                "platforms_active": [],
+                "platforms_inactive": [],
+            },
+            "recommendation": (
+                "Songstats returned none of the tracked discovery platforms (Spotify, Apple "
+                "Music, TikTok, YouTube, Shazam, Deezer, SoundCloud) for this artist, so "
+                "cross-platform presence cannot be assessed. Confirm the artist is correctly "
+                "matched on Songstats and that their profiles are linked."
+            ),
+        }
+
+    score = round(_clamp(len(active) / total * 100))
+
+    if score >= 70:
+        status = "good"
+    elif score >= 40:
+        status = "warning"
+    else:
+        status = "critical"
+
+    role_map = {d: role for _k, _f, d, role in PLATFORM_GAP_TARGETS}
+    if inactive:
+        gaps = "; ".join(f"{name} — {role_map[name]}" for name in inactive)
+        gap_sentence = (
+            f"Inactive on {len(inactive)} of {total} available platforms. Close the gaps: {gaps}."
+        )
+    else:
+        gap_sentence = (
+            f"Active on all {total} available platforms — a broad, healthy discovery footprint."
+        )
+
+    if status == "good":
+        rec = (
+            f"Strong cross-platform presence: active on {len(active)}/{total} platforms "
+            f"({score}%). {gap_sentence} Maintain this breadth so the artist surfaces wherever "
+            "listeners discover music."
+        )
+    elif status == "warning":
+        rec = (
+            f"Uneven cross-platform presence: active on {len(active)}/{total} platforms "
+            f"({score}%). {gap_sentence} Prioritise the platforms above whose audience best fits "
+            "the artist to widen discovery."
+        )
+    else:
+        rec = (
+            f"Concentrated on too few platforms: active on only {len(active)}/{total} "
+            f"({score}%). {gap_sentence} Relying on a narrow set of surfaces caps discovery — "
+            "expand onto the missing platforms above."
+        )
+
+    return {
+        "name": "PLATFORM_GAP",
+        "score": score,
+        "status": status,
+        "detail": {
+            "platforms_checked": available,
+            "platforms_active": active,
+            "platforms_inactive": inactive,
+        },
+        "recommendation": rec,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public interface
 # ---------------------------------------------------------------------------
 def compute_discoverability_score(
@@ -394,6 +526,7 @@ def compute_discoverability_score(
     tracks: list[dict],
     stats: dict,
     mood_data: dict | None = None,
+    logger=None,
 ) -> dict:
     """
     Parameters
@@ -411,6 +544,9 @@ def compute_discoverability_score(
         successfully analysed track) and ``skipped`` (int, count of top tracks whose
         analysis failed/was unavailable). API calls live in the caller; this module
         stays pure-logic.
+    logger : logging.Logger | None
+        Optional logger; PLATFORM_GAP uses it to record which target platforms are
+        missing entirely from Songstats' response (its real coverage gaps).
 
     Returns
     -------
@@ -427,9 +563,13 @@ def compute_discoverability_score(
         mood_data.get("track_moods", []),
         mood_data.get("skipped", 0),
     )
+    d_platform = _platform_gap(stats, logger=logger)
 
-    diagnostics = [d_catalogue, d_concentration, d_reach, d_mood]
-    overall = round(sum(d["score"] for d in diagnostics) / len(diagnostics))
+    diagnostics = [d_catalogue, d_concentration, d_reach, d_mood, d_platform]
+    # Average only over diagnostics with usable data; insufficient_data ones are
+    # excluded so they neither help nor hurt the overall score.
+    valid = [d for d in diagnostics if d["status"] != "insufficient_data"]
+    overall = round(sum(d["score"] for d in valid) / len(valid)) if valid else 0
 
     return {
         "artist_name": artist_data.get("artist_name", "Unknown"),

@@ -346,6 +346,8 @@
       border-radius: 999px;
     }
     .mood-chip b { color: var(--text); font-weight: 700; }
+    .mood-chip.good     { color: var(--cyan); background: rgba(0,229,255,0.12); }
+    .mood-chip.critical { color: var(--red);  background: rgba(255,59,48,0.12); }
 
     .diag-rec {
       font-size: 0.82rem;
@@ -492,6 +494,15 @@
         .join('');
     }
 
+    function platformGapHTML(detail) {
+      const active = detail.platforms_active || [];
+      const inactive = detail.platforms_inactive || [];
+      if (!active.length && !inactive.length) return '';
+      const chips = (list, cls) => list
+        .map(p => `<span class="mood-chip ${cls}">${p}</span>`).join('');
+      return `<div class="mood-dist">${chips(active, 'good')}${chips(inactive, 'critical')}</div>`;
+    }
+
     function renderDiagnostic(d) {
       const sc = statusClass(d.status);
       return `
@@ -509,6 +520,8 @@
           ${d.detail ? `<div class="diag-details">${detailRows(d.detail)}</div>` : ''}
           ${d.detail && Array.isArray(d.detail.top_moods) && d.detail.top_moods.length
             ? `<div class="mood-dist">${topMoodsHTML(d.detail.top_moods)}</div>` : ''}
+          ${d.detail && Array.isArray(d.detail.platforms_checked)
+            ? platformGapHTML(d.detail) : ''}
           ${d.detail && debugRows(d.detail) ? `<details class="diag-calc">
             <summary>Show calculation details</summary>
             <div class="diag-details">${debugRows(d.detail)}</div>

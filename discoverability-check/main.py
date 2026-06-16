@@ -1,5 +1,6 @@
 import os
 import asyncio
+import logging
 from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -9,6 +10,9 @@ from dotenv import load_dotenv
 from scoring import compute_discoverability_score
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("discoverability-check")
 
 BASE_PATH = ""
 
@@ -322,7 +326,7 @@ async def get_artist_report(request: ArtistRequest):
         )
 
     # Step 4: score
-    scored = compute_discoverability_score(artist, tracks, raw_stats, mood_data)
+    scored = compute_discoverability_score(artist, tracks, raw_stats, mood_data, logger=logger)
 
     return {
         "artist_name": resolved_name,
