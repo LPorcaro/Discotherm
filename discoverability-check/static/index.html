@@ -337,6 +337,16 @@
     .diag-calc summary:hover { color: var(--text); }
     .diag-calc[open] summary { margin-bottom: 10px; }
 
+    .mood-dist { display: flex; flex-wrap: wrap; gap: 6px; }
+    .mood-chip {
+      font-size: 0.72rem;
+      color: var(--muted);
+      background: var(--border);
+      padding: 2px 9px;
+      border-radius: 999px;
+    }
+    .mood-chip b { color: var(--text); font-weight: 700; }
+
     .diag-rec {
       font-size: 0.82rem;
       color: var(--muted);
@@ -440,6 +450,10 @@
       playlists_total:           'Total Playlists',
       playlists_editorial:       'Editorial',
       editorial_pct:             'Editorial %',
+      tracks_analyzed:           'Tracks Analyzed',
+      tracks_skipped:            'Skipped',
+      dominant_mood:             'Dominant Mood',
+      dominant_mood_count:       'Dominant Count',
     };
     // Internal calculation breakdown — hidden behind a toggle, not shown by default.
     const DEBUG_LABELS = {
@@ -459,8 +473,16 @@
 
     function detailRows(detail) {
       return Object.entries(detail)
-        .filter(([k, v]) => v != null && !(k in DEBUG_LABELS))
+        // Skip nulls, debug fields, and nested objects (e.g. mood_distribution,
+        // rendered separately as chips).
+        .filter(([k, v]) => v != null && typeof v !== 'object' && !(k in DEBUG_LABELS))
         .map(([k, v]) => statHTML(k, v, DETAIL_LABELS[k] || k))
+        .join('');
+    }
+
+    function moodDistHTML(dist) {
+      return Object.entries(dist)
+        .map(([mood, count]) => `<span class="mood-chip">${mood} <b>${count}</b></span>`)
         .join('');
     }
 
@@ -486,6 +508,8 @@
             <div class="diag-bar-fill ${sc}" style="width:${d.score}%"></div>
           </div>
           ${d.detail ? `<div class="diag-details">${detailRows(d.detail)}</div>` : ''}
+          ${d.detail && d.detail.mood_distribution && Object.keys(d.detail.mood_distribution).length
+            ? `<div class="mood-dist">${moodDistHTML(d.detail.mood_distribution)}</div>` : ''}
           ${d.detail && debugRows(d.detail) ? `<details class="diag-calc">
             <summary>Show calculation details</summary>
             <div class="diag-details">${debugRows(d.detail)}</div>

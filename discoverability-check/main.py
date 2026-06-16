@@ -87,6 +87,40 @@ async def _fetch_artist_image(client: httpx.AsyncClient, tracks: list[dict]) -> 
         return None
 
 
+async def _fetch_track_mood(client: httpx.AsyncClient, track_id: int, mxm_key: str) -> str | None:
+    """Return the single dominant mood for a track via Musixmatch lyric analysis, or None.
+
+    None means the analysis failed or no moods were available (restricted track), so the
+    caller should treat the track as skipped.
+    """
+    try:
+        resp = await client.get(
+            f"{MUSIXMATCH_BASE}/track.lyrics.analysis.get",
+            params={"track_id": track_id, "apikey": mxm_key},
+        )
+        resp.raise_for_status()
+        analysis = (mxm_body(resp.json()).get("analysis") or {})
+        main_moods = ((analysis.get("moods") or {}).get("main_moods")) or []
+        return main_moods[0] if main_moods else None
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
+async def _resolve_mood_data(client: httpx.AsyncClient, tracks: list[dict], mxm_key: str) -> dict:
+    """Analyse the top 15 tracks by rating concurrently and summarise mood coherence inputs."""
+    top = sorted(tracks, key=lambda t: t.get("track_rating", 0) or 0, reverse=True)[:15]
+    top = [t for t in top if t.get("track_id")]
+    if not top:
+        return {"dominant_moods": [], "skipped": 0}
+
+    results = await asyncio.gather(
+        *[_fetch_track_mood(client, t["track_id"], mxm_key) for t in top]
+    )
+    dominant_moods = [m for m in results if m]
+    skipped = len(results) - len(dominant_moods)
+    return {"dominant_moods": dominant_moods, "skipped": skipped}
+
+
 async def _resolve_songstats(client: httpx.AsyncClient, resolved_name: str, ss_key: str) -> dict:
     """Search Songstats for the artist and return raw_stats keyed by source."""
     headers = {"apikey": ss_key, "Accept": "application/json"}
@@ -280,11 +314,14 @@ async def get_artist_report(request: ArtistRequest):
             _resolve_songstats(client, resolved_name, ss_key),
         )
 
-        # Step 3: artist thumbnail from highest-rated track's Spotify album art
-        artist_image_url = await _fetch_artist_image(client, tracks)
+        # Step 3: artist thumbnail + mood analysis (both depend on resolved tracks)
+        artist_image_url, mood_data = await asyncio.gather(
+            _fetch_artist_image(client, tracks),
+            _resolve_mood_data(client, tracks, mxm_key),
+        )
 
     # Step 4: score
-    scored = compute_discoverability_score(artist, tracks, raw_stats)
+    scored = compute_discoverability_score(artist, tracks, raw_stats, mood_data)
 
     return {
         "artist_name": resolved_name,
