@@ -21,8 +21,9 @@ router = APIRouter()
 
 MUSIXMATCH_BASE = "https://api.musixmatch.com/ws/1.1"
 SONGSTATS_BASE = "https://api.songstats.com/enterprise/v1"
-PAGES_TO_FETCH = 5   # 5 pages × 100 = up to 500 candidate tracks
+PAGES_TO_FETCH = 5   # 5 pages × 100 = up to 500 candidate tracks per artist_id
 PAGE_SIZE = 100
+ARTIST_SEARCH_PAGE_SIZE = 30  # wide enough to surface fragmented duplicate artist records
 
 
 class ArtistRequest(BaseModel):
@@ -66,39 +67,63 @@ async def _probe_artist_tracks(client: httpx.AsyncClient, artist_id: int, mxm_ke
         return False
 
 
-async def _resolve_canonical_artist(client: httpx.AsyncClient, query: str, mxm_key: str) -> dict | None:
-    """Resolve a query to a canonical artist dict via f_artist_id probing.
+async def _resolve_artist_records(
+    client: httpx.AsyncClient, query: str, mxm_key: str
+) -> tuple[dict | None, list[int]]:
+    """Resolve a query to a canonical artist record plus every artist_id to aggregate.
 
-    artist.search can return several homonyms (e.g. two "i cani" records, one with
-    0 tracks). We probe the top 5 candidates and pick the first whose f_artist_id
-    actually returns tracks. Falls back to the first candidate if none have tracks.
-    Returns None only when artist.search finds nothing at all.
+    Musixmatch splits a single real artist across many duplicate records that share the
+    exact same name: homonyms (two "i cani", one empty) AND fragmentation (Katy Perry's
+    catalogue is spread over 25+ records, one with 238 tracks, most with 0-1). So we:
+      1. artist.search a wide page (to surface fragmented records),
+      2. probe every candidate's f_artist_id for tracks (page_size=1),
+      3. pick a canonical record (first probed candidate that has tracks — used for the
+         display name/image),
+      4. aggregate over every record whose name *exactly* matches the canonical name AND
+         has tracks. Exact-name matching excludes "feat./variant" acts (e.g. "I CANI DEL
+         DISAGIO") so f_artist_id stays precise.
+
+    Returns (canonical_artist, artist_ids_to_fetch). artist_ids_to_fetch falls back to the
+    canonical id when no record has tracks. Returns (None, []) when nothing is found.
     """
     resp = await client.get(
         f"{MUSIXMATCH_BASE}/artist.search",
-        params={"q_artist": query, "page_size": 5, "page": 1, "apikey": mxm_key},
+        params={"q_artist": query, "page_size": ARTIST_SEARCH_PAGE_SIZE, "page": 1, "apikey": mxm_key},
     )
     resp.raise_for_status()
     artist_list = mxm_body(resp.json()).get("artist_list", [])
-    candidates = [a["artist"] for a in artist_list[:5] if a.get("artist")]
+    candidates = [a["artist"] for a in artist_list if a.get("artist")]
     if not candidates:
-        return None
+        return None, []
 
     probes = await asyncio.gather(
         *[_probe_artist_tracks(client, a["artist_id"], mxm_key) for a in candidates]
     )
-    for artist, has_tracks in zip(candidates, probes):
-        if has_tracks:
-            return artist
-    return candidates[0]
+    canonical = next((c for c, has in zip(candidates, probes) if has), candidates[0])
+    canon_name = canonical["artist_name"].lower()
+
+    artist_ids = [
+        c["artist_id"]
+        for c, has in zip(candidates, probes)
+        if has and c["artist_name"].lower() == canon_name
+    ]
+    if not artist_ids:
+        artist_ids = [canonical["artist_id"]]
+    return canonical, artist_ids
 
 
-async def _resolve_tracks(client: httpx.AsyncClient, artist_id: int, mxm_key: str) -> list[dict]:
-    """Fetch all pages for the artist_id concurrently and return deduplicated track dicts."""
-    pages = await asyncio.gather(
-        *[fetch_track_page(client, artist_id, p, mxm_key) for p in range(1, PAGES_TO_FETCH + 1)],
-        return_exceptions=True,
-    )
+async def _resolve_tracks(client: httpx.AsyncClient, artist_ids: list[int], mxm_key: str) -> list[dict]:
+    """Fetch and dedupe tracks across one or more artist_id records via f_artist_id.
+
+    All (artist_id, page) fetches run concurrently; duplicate track_ids that appear under
+    multiple fragmented records are collapsed.
+    """
+    tasks = [
+        fetch_track_page(client, aid, p, mxm_key)
+        for aid in artist_ids
+        for p in range(1, PAGES_TO_FETCH + 1)
+    ]
+    pages = await asyncio.gather(*tasks, return_exceptions=True)
     seen_ids: set[int] = set()
     out: list[dict] = []
     for page_result in pages:
@@ -203,15 +228,16 @@ async def get_artist(request: ArtistRequest):
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         # Step 1: resolve the query to a canonical artist whose f_artist_id has tracks.
-        artist = await _resolve_canonical_artist(client, request.name, api_key)
+        artist, artist_ids = await _resolve_artist_records(client, request.name, api_key)
         if artist is None:
             raise HTTPException(status_code=404, detail=f"Artist '{request.name}' not found on Musixmatch")
         artist_id = artist["artist_id"]
 
-        # Step 2: fetch the catalogue precisely via track.search?f_artist_id (no name filter).
+        # Step 2: aggregate the catalogue precisely via track.search?f_artist_id across every
+        # exact-name record (no fuzzy name filter needed).
         # NOTE: artist.albums.get and album.tracks.get require a paid Musixmatch plan
         # and return empty on the free tier. track.search is the deepest available endpoint.
-        matched_tracks = await _resolve_tracks(client, artist_id, api_key)
+        matched_tracks = await _resolve_tracks(client, artist_ids, api_key)
 
     return {
         "artist": artist,
@@ -220,7 +246,8 @@ async def get_artist(request: ArtistRequest):
         "total_tracks_found": len(matched_tracks),
         "note": (
             "artist.albums.get and album.tracks.get require a paid Musixmatch plan. "
-            f"Tracks sourced from {PAGES_TO_FETCH} pages of track.search filtered by f_artist_id."
+            f"Tracks aggregated from {PAGES_TO_FETCH} pages of track.search per exact-name "
+            "artist record (f_artist_id), deduplicated."
         ),
     }
 
@@ -312,15 +339,15 @@ async def get_artist_report(request: ArtistRequest):
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
         # Step 1: resolve to a canonical artist whose f_artist_id has tracks (must happen
         # first — both the track fetch and the Songstats lookup need it).
-        artist = await _resolve_canonical_artist(client, request.name, mxm_key)
+        artist, artist_ids = await _resolve_artist_records(client, request.name, mxm_key)
         if artist is None:
             raise HTTPException(status_code=404, detail=f"Artist '{request.name}' not found on Musixmatch")
         artist_id = artist["artist_id"]
         resolved_name = artist["artist_name"]
 
-        # Step 2: track fetch (by f_artist_id) + Songstats stats concurrently
+        # Step 2: track fetch (aggregated by f_artist_id) + Songstats stats concurrently
         tracks, raw_stats = await asyncio.gather(
-            _resolve_tracks(client, artist_id, mxm_key),
+            _resolve_tracks(client, artist_ids, mxm_key),
             _resolve_songstats(client, resolved_name, ss_key),
         )
 
