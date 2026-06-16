@@ -452,8 +452,7 @@
       editorial_pct:             'Editorial %',
       tracks_analyzed:           'Tracks Analyzed',
       tracks_skipped:            'Skipped',
-      dominant_mood:             'Dominant Mood',
-      dominant_mood_count:       'Dominant Count',
+      avg_cosine_similarity:     'Avg Similarity',
     };
     // Internal calculation breakdown — hidden behind a toggle, not shown by default.
     const DEBUG_LABELS = {
@@ -473,16 +472,16 @@
 
     function detailRows(detail) {
       return Object.entries(detail)
-        // Skip nulls, debug fields, and nested objects (e.g. mood_distribution,
+        // Skip nulls, debug fields, and nested objects/arrays (e.g. top_moods,
         // rendered separately as chips).
         .filter(([k, v]) => v != null && typeof v !== 'object' && !(k in DEBUG_LABELS))
         .map(([k, v]) => statHTML(k, v, DETAIL_LABELS[k] || k))
         .join('');
     }
 
-    function moodDistHTML(dist) {
-      return Object.entries(dist)
-        .map(([mood, count]) => `<span class="mood-chip">${mood} <b>${count}</b></span>`)
+    function topMoodsHTML(moods) {
+      return moods
+        .map((mood, i) => `<span class="mood-chip"><b>${i + 1}</b> ${mood}</span>`)
         .join('');
     }
 
@@ -508,8 +507,8 @@
             <div class="diag-bar-fill ${sc}" style="width:${d.score}%"></div>
           </div>
           ${d.detail ? `<div class="diag-details">${detailRows(d.detail)}</div>` : ''}
-          ${d.detail && d.detail.mood_distribution && Object.keys(d.detail.mood_distribution).length
-            ? `<div class="mood-dist">${moodDistHTML(d.detail.mood_distribution)}</div>` : ''}
+          ${d.detail && Array.isArray(d.detail.top_moods) && d.detail.top_moods.length
+            ? `<div class="mood-dist">${topMoodsHTML(d.detail.top_moods)}</div>` : ''}
           ${d.detail && debugRows(d.detail) ? `<details class="diag-calc">
             <summary>Show calculation details</summary>
             <div class="diag-details">${debugRows(d.detail)}</div>

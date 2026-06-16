@@ -87,11 +87,12 @@ async def _fetch_artist_image(client: httpx.AsyncClient, tracks: list[dict]) -> 
         return None
 
 
-async def _fetch_track_mood(client: httpx.AsyncClient, track_id: int, mxm_key: str) -> str | None:
-    """Return the single dominant mood for a track via Musixmatch lyric analysis, or None.
+async def _fetch_track_mood(client: httpx.AsyncClient, track_id: int, mxm_key: str) -> list[str] | None:
+    """Return the ordered ``main_moods`` list for a track via Musixmatch lyric analysis, or None.
 
-    None means the analysis failed or no moods were available (restricted track), so the
-    caller should treat the track as skipped.
+    The list is ordered by prominence (most prominent first). None means the analysis
+    failed or no moods were available (restricted track), so the caller should treat
+    the track as skipped.
     """
     try:
         resp = await client.get(
@@ -101,7 +102,7 @@ async def _fetch_track_mood(client: httpx.AsyncClient, track_id: int, mxm_key: s
         resp.raise_for_status()
         analysis = (mxm_body(resp.json()).get("analysis") or {})
         main_moods = ((analysis.get("moods") or {}).get("main_moods")) or []
-        return main_moods[0] if main_moods else None
+        return main_moods if main_moods else None
     except (httpx.HTTPError, ValueError):
         return None
 
@@ -111,14 +112,14 @@ async def _resolve_mood_data(client: httpx.AsyncClient, tracks: list[dict], mxm_
     top = sorted(tracks, key=lambda t: t.get("track_rating", 0) or 0, reverse=True)[:15]
     top = [t for t in top if t.get("track_id")]
     if not top:
-        return {"dominant_moods": [], "skipped": 0}
+        return {"track_moods": [], "skipped": 0}
 
     results = await asyncio.gather(
         *[_fetch_track_mood(client, t["track_id"], mxm_key) for t in top]
     )
-    dominant_moods = [m for m in results if m]
-    skipped = len(results) - len(dominant_moods)
-    return {"dominant_moods": dominant_moods, "skipped": skipped}
+    track_moods = [m for m in results if m]
+    skipped = len(results) - len(track_moods)
+    return {"track_moods": track_moods, "skipped": skipped}
 
 
 async def _resolve_songstats(client: httpx.AsyncClient, resolved_name: str, ss_key: str) -> dict:

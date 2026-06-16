@@ -10,6 +10,19 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
+# The 25 mood labels documented for Musixmatch lyric analysis. The live API
+# actually returns its own ordered ``main_moods`` vocabulary (e.g. "love",
+# "nostalgia"), so these seed the vector space and any unseen moods returned by
+# the API are appended dynamically (see ``_mood_coherence``).
+BASE_MOODS = [
+    "peaceful", "tender", "sentimental", "melancholy", "somber", "easygoin",
+    "romantic", "sophisticated", "cool", "gritty", "upbeat", "empowering",
+    "sensual", "yearning", "serious", "lively", "stirring", "fiery", "urgent",
+    "brooding", "excited", "rowdy", "energizing", "defiant", "aggressive",
+]
+
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, value))
@@ -253,22 +266,18 @@ def _playlist_reach(stats: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Diagnostic 4 — MOOD_COHERENCE
 # Measures how consistent the artist's emotional identity is across their top
-# tracks.  For each of the top tracks we take the single dominant mood (from
-# Musixmatch lyric analysis); coherence is the share of those tracks that hang
-# on the SAME dominant mood.  A focused mood profile is easy for recommendation
-# engines / radio / mood playlists to slot in; a scattered one is not.
+# tracks.  Each track is turned into a mood VECTOR over a shared label space
+# (the 25 BASE_MOODS plus any moods the API returns, added dynamically). A
+# mood's weight is derived from its rank in the track's ordered ``main_moods``
+# list (most prominent = highest), 0 if absent. We take the catalogue centroid
+# (mean vector) and measure how tightly each track clusters around it via cosine
+# similarity. A high average similarity = a consistent emotional profile that is
+# easy for recommendation engines to categorise; a low one = a scattered profile.
 # ---------------------------------------------------------------------------
-def _mood_coherence(dominant_moods: list[str], skipped: int) -> dict:
-    analyzed = len(dominant_moods)
-
-    distribution: dict[str, int] = {}
-    for mood in dominant_moods:
-        distribution[mood] = distribution.get(mood, 0) + 1
-    # Sort distribution by count desc for stable, readable output.
-    distribution = dict(sorted(distribution.items(), key=lambda kv: kv[1], reverse=True))
-
-    dominant_mood = next(iter(distribution), None)
-    dominant_mood_count = distribution.get(dominant_mood, 0) if dominant_mood else 0
+def _mood_coherence(track_moods: list[list[str]], skipped: int) -> dict:
+    # Keep only tracks that actually returned moods.
+    valid = [moods for moods in track_moods if moods]
+    analyzed = len(valid)
 
     if analyzed < 5:
         return {
@@ -278,49 +287,89 @@ def _mood_coherence(dominant_moods: list[str], skipped: int) -> dict:
             "detail": {
                 "tracks_analyzed": analyzed,
                 "tracks_skipped": skipped,
-                "dominant_mood": dominant_mood,
-                "dominant_mood_count": dominant_mood_count,
-                "mood_distribution": distribution,
+                "avg_cosine_similarity": None,
+                "top_moods": [],
             },
             "recommendation": (
                 f"Only {analyzed} of the top tracks returned usable lyric mood analysis "
                 f"({skipped} skipped — restricted or no analysis available). That is too few "
-                "to assess mood coherence reliably. Ensure lyrics are delivered and "
+                "to assess mood-profile consistency reliably. Ensure lyrics are delivered and "
                 "unrestricted for the catalogue so mood-based recommendation surfaces "
                 "(mood playlists, radio, auto-generated mixes) can classify the artist."
             ),
         }
 
-    coherence = dominant_mood_count / analyzed * 100
-    score = round(_clamp(coherence))
+    # Build the shared mood vocabulary: 25 base labels + any extras seen.
+    vocab = list(BASE_MOODS)
+    seen = set(vocab)
+    for moods in valid:
+        for mood in moods:
+            if mood not in seen:
+                seen.add(mood)
+                vocab.append(mood)
+    index = {mood: i for i, mood in enumerate(vocab)}
 
-    if coherence >= 50:
+    # One rank-weighted vector per track: first (most prominent) mood gets the
+    # highest weight, decreasing down the ordered list; absent moods stay 0.
+    matrix = np.zeros((analyzed, len(vocab)), dtype=float)
+    for row, moods in enumerate(valid):
+        n = len(moods)
+        for rank, mood in enumerate(moods):
+            matrix[row, index[mood]] = n - rank
+
+    centroid = matrix.mean(axis=0)
+    centroid_norm = np.linalg.norm(centroid)
+
+    if centroid_norm == 0:
+        avg_cosine = 0.0
+    else:
+        track_norms = np.linalg.norm(matrix, axis=1)
+        sims = []
+        for row in range(analyzed):
+            if track_norms[row] == 0:
+                continue
+            sims.append(float(matrix[row] @ centroid) / (track_norms[row] * centroid_norm))
+        avg_cosine = float(np.mean(sims)) if sims else 0.0
+
+    score = round(_clamp(avg_cosine * 100))
+
+    # Top 3 moods by average weight across the catalogue (for UI context).
+    mean_weights = matrix.mean(axis=0)
+    ranked = sorted(
+        ((vocab[i], mean_weights[i]) for i in range(len(vocab)) if mean_weights[i] > 0),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    top_moods = [mood for mood, _ in ranked[:3]]
+    top_phrase = ", ".join(top_moods) if top_moods else "n/a"
+
+    if score >= 50:
         status = "good"
         rec = (
-            f"{dominant_mood_count}/{analyzed} of the top tracks share a dominant mood of "
-            f"'{dominant_mood}' ({coherence:.0f}%). This is a clear, recognisable emotional "
-            "identity — recommendation systems, mood playlists and radio can confidently "
-            "categorise the artist, which compounds discovery. Keep reinforcing this mood in "
-            "metadata, artwork and promotion so the signal stays unambiguous."
+            f"Across the top {analyzed} tracks the artist's mood profile is highly consistent "
+            f"(average similarity {avg_cosine:.2f}) — their tracks share a coherent emotional "
+            f"identity led by {top_phrase}. That consistency lets recommendation systems, mood "
+            "playlists and radio confidently categorise the artist, compounding discovery. "
+            "Keep reinforcing this profile in metadata, artwork and promotion."
         )
-    elif coherence >= 25:
+    elif score >= 25:
         status = "warning"
         rec = (
-            f"The most common dominant mood is '{dominant_mood}' but it covers only "
-            f"{dominant_mood_count}/{analyzed} of the top tracks ({coherence:.0f}%). The mood "
-            "identity is somewhat mixed, which makes algorithmic categorisation less certain. "
-            f"Consider leaning into '{dominant_mood}' across metadata and promotion for the "
-            "tracks where it fits, to give recommendation engines a stronger primary signal."
+            f"The artist's mood profile is moderately consistent across the top {analyzed} "
+            f"tracks (average similarity {avg_cosine:.2f}); the catalogue leans toward "
+            f"{top_phrase} but varies noticeably track to track, which makes algorithmic "
+            "genre/mood matching less precise. Consider foregrounding the dominant moods in "
+            "metadata and promotion for the tracks where they fit to sharpen the signal."
         )
     else:
         status = "critical"
         rec = (
-            f"The top tracks are spread across many moods — even the most frequent, "
-            f"'{dominant_mood}', accounts for just {dominant_mood_count}/{analyzed} "
-            f"({coherence:.0f}%). A scattered mood profile makes the artist hard to slot into "
-            "mood playlists, radio and algorithmic mixes. Pick a primary mood to lead with and "
-            f"lean into it ('{dominant_mood}' is the current front-runner) in metadata, "
-            "playlist pitches and promotion so recommendation systems get a clear signal."
+            f"The artist's mood profile varies significantly across the top {analyzed} tracks "
+            f"(average similarity {avg_cosine:.2f}), which may make algorithmic genre/mood "
+            f"matching less precise — even the catalogue's strongest moods ({top_phrase}) are "
+            "not consistent enough to anchor a recognisable identity. Pick a primary mood to "
+            "lead with and reinforce it in metadata, playlist pitches and promotion so "
+            "recommendation systems get a clearer signal."
         )
 
     return {
@@ -330,9 +379,8 @@ def _mood_coherence(dominant_moods: list[str], skipped: int) -> dict:
         "detail": {
             "tracks_analyzed": analyzed,
             "tracks_skipped": skipped,
-            "dominant_mood": dominant_mood,
-            "dominant_mood_count": dominant_mood_count,
-            "mood_distribution": distribution,
+            "avg_cosine_similarity": round(avg_cosine, 4),
+            "top_moods": top_moods,
         },
         "recommendation": rec,
     }
@@ -359,9 +407,10 @@ def compute_discoverability_score(
         This matches the ``raw_stats`` field returned by POST /artist/stats.
     mood_data : dict | None
         Pre-fetched lyric-analysis result for MOOD_COHERENCE, with keys:
-        ``dominant_moods`` (list[str], one dominant mood per successfully analysed track)
-        and ``skipped`` (int, count of top tracks whose analysis failed/was unavailable).
-        API calls live in the caller; this module stays pure-logic.
+        ``track_moods`` (list[list[str]], the ordered ``main_moods`` list for each
+        successfully analysed track) and ``skipped`` (int, count of top tracks whose
+        analysis failed/was unavailable). API calls live in the caller; this module
+        stays pure-logic.
 
     Returns
     -------
@@ -369,13 +418,13 @@ def compute_discoverability_score(
         overall_score  — int 0–100
         diagnostics    — list of diagnostic dicts
     """
-    mood_data = mood_data or {"dominant_moods": [], "skipped": 0}
+    mood_data = mood_data or {"track_moods": [], "skipped": 0}
 
     d_catalogue = _catalogue_depth(tracks)
     d_concentration = _stream_concentration(tracks)
     d_reach = _playlist_reach(stats)
     d_mood = _mood_coherence(
-        mood_data.get("dominant_moods", []),
+        mood_data.get("track_moods", []),
         mood_data.get("skipped", 0),
     )
 
