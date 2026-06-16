@@ -63,6 +63,29 @@ def _following_phrase(tier: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Scale factor — a reach-magnitude component blended into the HEADLINE score only
+# (the five diagnostics' own scores and recommendation text are untouched). It maps
+# log10(monthly_listeners) linearly across a realistic artist-size range so the
+# overall score spreads meaningfully between superstar and smaller artists:
+#   log10(1,000)        ≈ 3.00 -> 0
+#   log10(150,000,000)  ≈ 8.18 -> 100   (clamped outside this range)
+# Falls back to followers_total, then 0, when monthly listeners are unavailable.
+# ---------------------------------------------------------------------------
+_SCALE_LOG_LO = math.log10(1_000)
+_SCALE_LOG_HI = math.log10(150_000_000)
+
+
+def _scale_factor(stats: dict) -> float:
+    """Map the artist's reach (Spotify monthly listeners) to a 0–100 scale component."""
+    spotify = stats.get("spotify", {}) if isinstance(stats, dict) else {}
+    audience = spotify.get("monthly_listeners_current") or spotify.get("followers_total") or 0
+    if not isinstance(audience, (int, float)) or audience <= 0:
+        return 0.0
+    pct = (math.log10(audience) - _SCALE_LOG_LO) / (_SCALE_LOG_HI - _SCALE_LOG_LO) * 100
+    return _clamp(pct)
+
+
+# ---------------------------------------------------------------------------
 # Diagnostic 1 — CATALOGUE_DEPTH
 # Measures metadata completeness: what fraction of tracks have both
 # has_lyrics=1 and has_richsync=1 (synced lyrics).  A catalogue that is
@@ -719,11 +742,20 @@ def compute_discoverability_score(
     # Average only over diagnostics with usable data; insufficient_data ones are
     # excluded so they neither help nor hurt the overall score.
     valid = [d for d in diagnostics if d["status"] != "insufficient_data"]
-    overall = round(sum(d["score"] for d in valid) / len(valid)) if valid else 0
+    diag_avg = sum(d["score"] for d in valid) / len(valid) if valid else 0
+    # Blend the diagnostic average (80%) with a reach-magnitude scale factor (20%) so the
+    # headline score reflects audience scale alongside catalogue quality. Only this number
+    # changes — each diagnostic's own score and recommendation text stay exactly as computed.
+    scale = _scale_factor(stats)
+    overall = round(0.8 * diag_avg + 0.2 * scale)
 
     return {
         "artist_name": artist_data.get("artist_name", "Unknown"),
         "overall_score": overall,
         "overall_status": _status(overall),
+        "overall_score_note": (
+            "Includes a modest scale-adjustment reflecting reach magnitude alongside the "
+            "five core diagnostics."
+        ),
         "diagnostics": diagnostics,
     }
