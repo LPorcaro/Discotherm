@@ -364,31 +364,20 @@
       font-size: 0.82rem;
       color: var(--muted);
     }
-    .recent-activity {
-      display: none;
-      font-size: 0.78rem;
-      color: var(--muted);
-      margin-top: -4px;
-    }
-    .recent-activity.show { display: inline-block; }
-    .recent-activity.stale {
-      color: var(--orange);
-      opacity: 0.85;
-    }
     .touring-badge {
       display: none;
       align-items: center;
-      gap: 6px;
-      align-self: flex-start;
-      margin-top: 2px;
-      padding: 3px 10px;
+      gap: 7px;
+      margin: 2px 0;
+      padding: 6px 14px;
       border-radius: 999px;
-      font-size: 0.72rem;
+      font-size: 0.85rem;
       font-weight: 600;
       letter-spacing: 0.01em;
-      color: var(--cyan);
-      background: color-mix(in srgb, var(--cyan) 12%, transparent);
-      border: 1px solid color-mix(in srgb, var(--cyan) 35%, transparent);
+      line-height: 1.3;
+      color: color-mix(in srgb, var(--cyan) 78%, white);
+      background: color-mix(in srgb, var(--cyan) 16%, transparent);
+      border: 1px solid color-mix(in srgb, var(--cyan) 42%, transparent);
     }
     .touring-badge.show { display: inline-flex; }
 
@@ -790,15 +779,13 @@
         <div class="artist-meta">
           <h2 id="res-artist-name"></h2>
           <span class="track-count" id="res-track-count"></span>
-          <span class="touring-badge" id="res-touring-badge"></span>
         </div>
         <button id="pdf-btn" class="btn-secondary" type="button">📄 Download PDF Report</button>
       </div>
 
       <div class="stat-chips" id="res-stat-chips"></div>
 
-      <span class="recent-activity" id="res-recent-activity"
-            title="Most recent release date from the Songstats catalogue — newest release of any kind, including third-party remixes and edits."></span>
+      <span class="touring-badge" id="res-touring-badge"></span>
 
       <div class="fan-callout" id="res-fan-callout"></div>
 
@@ -847,15 +834,6 @@
       if (n >= 1e6) return fmt(n / 1e6, 'M');
       if (n >= 1e3) return fmt(n / 1e3, 'K');
       return String(Math.round(n));
-    }
-
-    // Format a YYYY-MM-DD string as "Sep 30, 2021" without going through Date() (which would
-    // reinterpret the date in the local timezone and risk an off-by-one day shift).
-    function formatUpdateDate(iso) {
-      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
-      if (!m) return iso || '';
-      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      return `${months[+m[2] - 1]} ${+m[3]}, ${m[1]}`;
     }
 
     // Build the Songstats stat chips (monthly listeners / followers / popularity). Chips with
@@ -1108,19 +1086,6 @@
         document.getElementById('res-track-count').textContent =
           `${data.total_tracks.toLocaleString()} track${data.total_tracks === 1 ? '' : 's'} found`;
 
-        // Last-release line — real per-track release_date from the Songstats catalogue
-        // (newest release of any kind, remixes included). Amber tint when >3 years old.
-        const raEl = document.getElementById('res-recent-activity');
-        const lr = data.last_release;
-        if (lr && lr.most_recent_release_date) {
-          raEl.textContent = `Last release: ${formatUpdateDate(lr.most_recent_release_date)}`;
-          raEl.classList.toggle('stale', Number(lr.years_since_release) > 3);
-          raEl.classList.add('show');
-        } else {
-          raEl.textContent = '';
-          raEl.classList.remove('show', 'stale');
-        }
-
         // Wire the PDF export to the *resolved* artist name so the download matches what's shown.
         document.getElementById('pdf-btn').onclick = () => {
           window.open(
@@ -1177,31 +1142,29 @@
         const renderToken = ++renderVersion;
         const isStale = () => renderToken !== renderVersion;
 
-        // Reset to the 0-state, then count up to the final value (eased) over ~1.2s, with the
-        // colour interpolating red→orange→cyan and the thermometer filling in lockstep.
+        // Reset to the 0-state, then count up to the final value (eased) over ~1.2s. The colour
+        // is derived from the FINAL score and applied immediately, so the gauge shows its target
+        // colour from the very first frame — only the fill LEVEL animates. This avoids the old
+        // bug where colour was bound to the rising value and flashed red→amber→cyan en route, and
+        // it stops the per-frame background repaint (only `width` changes during the animation).
+        const finalCol = rgb(scoreColor(scoreTarget));
         scoreEl.className   = 'score-number';
         scoreEl.textContent = '0';
-        scoreEl.style.color = rgb(scoreColor(0));
+        scoreEl.style.color = finalCol;
         thermoEl.className   = `thermometer-fill ${sc}`;
         thermoEl.style.width = '0%';
-        thermoEl.style.background = rgb(scoreColor(0));
+        thermoEl.style.background = finalCol;
         animateProgress({
           duration: 1200,
           delay: thermoDelay,
           onFrame: (e) => {
             const v = e * scoreTarget;
-            const col = rgb(scoreColor(v));
             scoreEl.textContent = Math.round(v);
-            scoreEl.style.color = col;
             thermoEl.style.width = `${v}%`;
-            thermoEl.style.background = col;
           },
           onDone: () => {
-            const col = rgb(scoreColor(scoreTarget));
             scoreEl.textContent = scoreTarget;
-            scoreEl.style.color = col;
             thermoEl.style.width = `${scoreTarget}%`;
-            thermoEl.style.background = col;
             // Re-trigger the settle glow each run (remove → reflow → add).
             scoreEl.classList.remove('settled');
             void scoreEl.offsetWidth;
