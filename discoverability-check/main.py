@@ -55,6 +55,9 @@ ARTIST_SEARCH_PAGE_SIZE = 30  # wide enough to surface fragmented duplicate arti
 
 class ArtistRequest(BaseModel):
     name: str
+    # Optional Musixmatch artist_id from an autocomplete suggestion. When present, the report
+    # skips fuzzy disambiguation and fetches tracks directly via this f_artist_id.
+    artist_id: int | None = None
 
 
 def mxm_body(resp_json: dict) -> dict:
@@ -749,7 +752,7 @@ async def _resolve_last_release(
     }
 
 
-async def _build_artist_report(name: str) -> dict:
+async def _build_artist_report(name: str, artist_id: int | None = None) -> dict:
     """Resolve an artist and assemble the full discoverability report payload.
 
     Shared by the JSON endpoint and the PDF export so both render identical data. Raises
@@ -766,10 +769,16 @@ async def _build_artist_report(name: str) -> dict:
 
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
         # Step 1: resolve to a canonical artist whose f_artist_id has tracks (must happen
-        # first — both the track fetch and the Songstats lookup need it).
-        artist, artist_ids = await _resolve_artist_records(client, name, mxm_key)
-        if artist is None:
-            raise HTTPException(status_code=404, detail=f"Artist '{name}' not found on Musixmatch")
+        # first — both the track fetch and the Songstats lookup need it). When an artist_id
+        # is supplied (from an autocomplete suggestion) we trust it and skip disambiguation,
+        # fetching that f_artist_id's catalogue directly.
+        if artist_id is not None:
+            artist = {"artist_id": artist_id, "artist_name": name}
+            artist_ids = [artist_id]
+        else:
+            artist, artist_ids = await _resolve_artist_records(client, name, mxm_key)
+            if artist is None:
+                raise HTTPException(status_code=404, detail=f"Artist '{name}' not found on Musixmatch")
         artist_id = artist["artist_id"]
         resolved_name = artist["artist_name"]
 
@@ -883,9 +892,61 @@ async def get_search_history():
     return {"history": out}
 
 
+@router.get("/artist/suggest")
+async def suggest_artists(q: str):
+    """Lightweight autocomplete: top distinct artist names matching ``q`` via Musixmatch
+    artist.search. Returns {"suggestions": [{artist_id, artist_name}, ...]} (max 6), deduped
+    by name and with aggregator/placeholder entities excluded. Degrades to an empty list on
+    any failure so the input never breaks.
+    """
+    query = (q or "").strip()
+    mxm_key = os.getenv("MUSIXMATCH_API_KEY")
+    if not mxm_key or len(query) < 3:
+        return {"suggestions": []}
+
+    # Combine two sources, same as the report's disambiguation: track.search mining surfaces the
+    # real high-volume records (e.g. "Cold" -> Coldplay) that artist.search buries behind ghost
+    # duplicates, while artist.search backfills lesser-known acts. Track-mined records come first
+    # because they're rating-ordered, so the most popular matches lead the list.
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            artist_resp, track_ids = await asyncio.gather(
+                client.get(
+                    f"{MUSIXMATCH_BASE}/artist.search",
+                    params={"q_artist": query, "page_size": 12, "page": 1, "apikey": mxm_key},
+                ),
+                _candidate_ids_from_tracks(client, query, mxm_key, pages=1),
+            )
+            artist_resp.raise_for_status()
+            artist_list = mxm_body(artist_resp.json()).get("artist_list", [])
+    except (httpx.HTTPError, ValueError):
+        return {"suggestions": []}
+
+    ordered: list[tuple[int, str]] = list(track_ids.items())
+    for a in artist_list:
+        ar = a.get("artist") or {}
+        aid = ar.get("artist_id")
+        if aid:
+            ordered.append((aid, ar.get("artist_name", "")))
+
+    suggestions: list[dict] = []
+    seen: set[str] = set()
+    for aid, nm in ordered:
+        if not aid or not nm or _norm(nm) in AGGREGATOR_NAMES:
+            continue
+        key = _fuzzy(nm)
+        if key in seen:
+            continue
+        seen.add(key)
+        suggestions.append({"artist_id": aid, "artist_name": nm})
+        if len(suggestions) >= 6:
+            break
+    return {"suggestions": suggestions}
+
+
 @router.post("/artist/report")
 async def get_artist_report(request: ArtistRequest):
-    return await _build_artist_report(request.name)
+    return await _build_artist_report(request.name, request.artist_id)
 
 
 @router.get("/artist/report/pdf")
