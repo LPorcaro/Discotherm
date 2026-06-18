@@ -1,7 +1,7 @@
 - [Python app routing](python-app-routing.md) — non-Node apps can't use the preview/router here; reach them via `${REPLIT_DEV_DOMAIN}:PORT` explicit-port link.
 - [Songstats raw_stats + TikTok semantics](songstats-stats.md) — tiktok.videos_total = FAN creates ≠ official presence (followers/profile_videos); PLATFORM_GAP "active" deliberately = official presence so the amplify-fan-content rec can fire.
 - [Musixmatch moods API](musixmatch-moods-api.md) — `track.lyrics.analysis.get` returns only an ordered `main_moods` string list (no values); vocab differs from the "25 labels" spec.
-- [Artist autocomplete source](autocomplete-artist-search.md) — type-ahead uses Songstats (prefix-aware); Musixmatch/JamBase search are token-only and miss partial names.
+- [Artist autocomplete source](autocomplete-artist-search.md) — autocomplete removed (user disliked it); if rebuilt, type-ahead needs Songstats (prefix-aware), not Musixmatch/JamBase.
 - [GitHub publish prep](github-publish-prep.md) — exclude `.agents/`/`replit.md`/`attached_assets/` (gitignore ≠ untrack); publish via a fresh user-authored commit, not the Git-pane connect flow.
 - [JamBase API](jambase-api.md) — use v3 base `api.data.jambase.com/v3` + Bearer auth (legacy `jb-api/v1` + `apikey=` query is dead); trial keys = upcoming events only (`eventDateFrom` ≥ today).
 - [Release-date API fields](release-date-api-fields.md) — real release date only from Songstats `/artists/catalog` (`release_date`); Musixmatch has none (only metadata-edit `updated_time`); catalogue top is remix-polluted for big artists.

@@ -883,50 +883,6 @@ async def get_search_history():
     return {"history": out}
 
 
-@router.get("/artist/suggest")
-async def suggest_artists(q: str):
-    """Lightweight autocomplete: top distinct artist names matching ``q`` via Songstats
-    artist search. Returns {"suggestions": [{artist_name}, ...]} (max 6), deduped by name and
-    with aggregator/placeholder entities excluded. Degrades to an empty list on any failure so
-    the input never breaks.
-
-    Songstats is used (not Musixmatch) because its search is prefix-aware — "coldp" -> Coldplay,
-    "madon" -> Madonna — whereas Musixmatch's q_artist only matches whole tokens, so partial
-    names surfaced junk. The chosen name is then fed to the normal report flow, which runs its
-    own Musixmatch resolution.
-    """
-    query = (q or "").strip()
-    ss_key = os.getenv("SONGSTATS_API_KEY")
-    if not ss_key or len(query) < 3:
-        return {"suggestions": []}
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(
-                f"{SONGSTATS_BASE}/artists/search",
-                params={"q": query, "limit": 15},
-                headers={"apikey": ss_key, "Accept": "application/json"},
-            )
-            resp.raise_for_status()
-            results = resp.json().get("results", [])
-    except (httpx.HTTPError, ValueError):
-        return {"suggestions": []}
-
-    suggestions: list[dict] = []
-    seen: set[str] = set()
-    for r in results:
-        nm = (r.get("name") or "").strip()
-        if not nm or _norm(nm) in AGGREGATOR_NAMES:
-            continue
-        key = _fuzzy(nm)
-        if key in seen:
-            continue
-        seen.add(key)
-        suggestions.append({"artist_name": nm})
-        if len(suggestions) >= 6:
-            break
-    return {"suggestions": suggestions}
-
-
 @router.post("/artist/report")
 async def get_artist_report(request: ArtistRequest):
     return await _build_artist_report(request.name)

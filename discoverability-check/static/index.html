@@ -114,40 +114,6 @@
     input[type="text"]::placeholder { color: var(--muted2); }
     input[type="text"]:focus { border-color: var(--cyan); }
 
-    /* ── Autocomplete suggestions dropdown ── */
-    .search-input-wrap { position: relative; flex: 1; display: flex; }
-    .search-input-wrap input[type="text"] { width: 100%; }
-    .suggest-list {
-      position: absolute;
-      top: calc(100% + 6px);
-      left: 0;
-      right: 0;
-      margin: 0;
-      padding: 4px;
-      list-style: none;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
-      z-index: 30;
-      max-height: 280px;
-      overflow-y: auto;
-    }
-    .suggest-list[hidden] { display: none; }
-    .suggest-item {
-      padding: 10px 12px;
-      border-radius: 7px;
-      color: var(--text);
-      font-size: 0.95rem;
-      cursor: pointer;
-      transition: background 0.12s, color 0.12s;
-    }
-    .suggest-item:hover,
-    .suggest-item.active {
-      background: var(--cyan-dim);
-      color: var(--cyan);
-    }
-
     /* ── Recently searched (persistent chip row under the search box) ── */
     .recent {
       margin-top: 18px;
@@ -797,10 +763,7 @@
       <div class="search-card">
         <label class="search-label" for="artist-input">Artist name</label>
         <div class="search-row">
-          <div class="search-input-wrap">
-            <input id="artist-input" type="text" placeholder="e.g. Sufjan Stevens" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggest-list" />
-            <ul id="suggest-list" class="suggest-list" role="listbox" hidden></ul>
-          </div>
+          <input id="artist-input" type="text" placeholder="e.g. Sufjan Stevens" autocomplete="off" />
           <button id="submit-btn">Run Report</button>
         </div>
       </div>
@@ -1090,7 +1053,6 @@
       // (the disabled button only blocks clicks), so ensure only one report runs at a time —
       // this makes the latest completed report deterministic and prevents request races.
       if (reportInFlight) return;
-      hideSuggestions();
       const name = input.value.trim();
       if (!name) return;
 
@@ -1300,91 +1262,9 @@
 
     btn.addEventListener('click', () => runReport());
 
-    // ── Artist autocomplete ──
-    const suggestList = document.getElementById('suggest-list');
-    let suggestItems = [];      // [{artist_name}]
-    let activeIndex = -1;       // keyboard-highlighted row, -1 = none
-    let suggestSeq = 0;         // guards against out-of-order async responses
-    let debounceTimer = null;
-
-    function hideSuggestions() {
-      suggestList.hidden = true;
-      suggestList.innerHTML = '';
-      suggestItems = [];
-      activeIndex = -1;
-      input.setAttribute('aria-expanded', 'false');
-    }
-
-    function renderSuggestions() {
-      suggestList.innerHTML = '';
-      if (suggestItems.length === 0) { hideSuggestions(); return; }
-      suggestItems.forEach((s, i) => {
-        const li = document.createElement('li');
-        li.className = 'suggest-item' + (i === activeIndex ? ' active' : '');
-        li.setAttribute('role', 'option');
-        li.textContent = s.artist_name;
-        // mousedown (not click) so it fires before the input's blur hides the list.
-        li.addEventListener('mousedown', e => {
-          e.preventDefault();
-          chooseSuggestion(i);
-        });
-        suggestList.appendChild(li);
-      });
-      suggestList.hidden = false;
-      input.setAttribute('aria-expanded', 'true');
-    }
-
-    function chooseSuggestion(i) {
-      const s = suggestItems[i];
-      if (!s) return;
-      input.value = s.artist_name;
-      hideSuggestions();
-      runReport();
-    }
-
-    async function fetchSuggestions(q) {
-      const seq = ++suggestSeq;
-      try {
-        const res = await fetch(`/artist/suggest?q=${encodeURIComponent(q)}`);
-        if (!res.ok) { if (seq === suggestSeq) hideSuggestions(); return; }
-        const data = await res.json();
-        if (seq !== suggestSeq) return;  // a newer keystroke superseded this response
-        // Don't show stale results if the input changed/emptied while in flight.
-        if (input.value.trim().length < 3) { hideSuggestions(); return; }
-        suggestItems = Array.isArray(data.suggestions) ? data.suggestions : [];
-        activeIndex = -1;
-        renderSuggestions();
-      } catch {
-        if (seq === suggestSeq) hideSuggestions();
-      }
-    }
-
-    input.addEventListener('input', () => {
-      const q = input.value.trim();
-      if (debounceTimer) clearTimeout(debounceTimer);
-      if (q.length < 3) { hideSuggestions(); return; }
-      debounceTimer = setTimeout(() => fetchSuggestions(q), 150);
-    });
-
     input.addEventListener('keydown', e => {
-      const open = !suggestList.hidden && suggestItems.length > 0;
-      if (e.key === 'ArrowDown' && open) {
-        e.preventDefault();
-        activeIndex = (activeIndex + 1) % suggestItems.length;
-        renderSuggestions();
-      } else if (e.key === 'ArrowUp' && open) {
-        e.preventDefault();
-        activeIndex = (activeIndex - 1 + suggestItems.length) % suggestItems.length;
-        renderSuggestions();
-      } else if (e.key === 'Enter') {
-        if (open && activeIndex >= 0) { e.preventDefault(); chooseSuggestion(activeIndex); }
-        else runReport();
-      } else if (e.key === 'Escape') {
-        hideSuggestions();
-      }
+      if (e.key === 'Enter') runReport();
     });
-
-    input.addEventListener('blur', () => { setTimeout(hideSuggestions, 120); });
 
     // ── About modal ──
     const aboutModal = document.getElementById('about-modal');
