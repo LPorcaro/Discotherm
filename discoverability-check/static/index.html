@@ -768,7 +768,7 @@
 
     <div class="loading" id="loading">
       <div class="spinner"></div>
-      <p id="loading-msg">Fetching data from Musixmatch &amp; Songstats…</p>
+      <p id="loading-msg">Fetching data…</p>
     </div>
 
     <div class="error-box" id="error-box"></div>
@@ -1053,7 +1053,7 @@
       setVisible(errBox, false);
       setVisible(results, false);
       setVisible(loading, true);
-      loadMsg.textContent = 'Fetching data from Musixmatch & Songstats…';
+      loadMsg.textContent = 'Fetching data…';
 
       try {
         const res = await fetch('/artist/report', {
