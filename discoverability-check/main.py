@@ -44,7 +44,7 @@ async def _httpx_error_handler(request: Request, exc: httpx.HTTPError) -> JSONRe
 
 
 MUSIXMATCH_BASE = "https://api.musixmatch.com/ws/1.1"
-JAMBASE_BASE = "https://www.jambase.com/jb-api/v1"
+JAMBASE_BASE = "https://api.data.jambase.com/v3"
 SONGSTATS_BASE = "https://api.songstats.com/enterprise/v1"
 PAGES_TO_FETCH = 5   # 5 pages × 100 = up to 500 candidate tracks per artist_id
 TOURING_WINDOW_DAYS = 365  # how far back JamBase events are counted for touring context
@@ -386,10 +386,12 @@ async def _resolve_touring_context(
         "eventDateFrom": date_from.isoformat(),
         "eventDateTo": today.isoformat(),
         "perPage": JAMBASE_PER_PAGE,
-        "apikey": jb_key,
     }
+    headers = {"Authorization": f"Bearer {jb_key}"}
     try:
-        resp = await client.get(f"{JAMBASE_BASE}/events", params={**base_params, "page": 1})
+        resp = await client.get(
+            f"{JAMBASE_BASE}/events", params={**base_params, "page": 1}, headers=headers
+        )
         resp.raise_for_status()
         data = resp.json()
     except (httpx.HTTPError, ValueError) as exc:
@@ -418,7 +420,9 @@ async def _resolve_touring_context(
         total_pages = (show_count + JAMBASE_PER_PAGE - 1) // JAMBASE_PER_PAGE if show_count else 1
     if total_pages > 1:
         try:
-            last = await client.get(f"{JAMBASE_BASE}/events", params={**base_params, "page": total_pages})
+            last = await client.get(
+                f"{JAMBASE_BASE}/events", params={**base_params, "page": total_pages}, headers=headers
+            )
             last.raise_for_status()
             dates += _event_dates(last.json().get("events") or [])
         except (httpx.HTTPError, ValueError) as exc:
