@@ -367,6 +367,42 @@ def _event_dates(events: list[dict]) -> list[str]:
     ]
 
 
+async def _resolve_jambase_artist_id(
+    client: httpx.AsyncClient, artist_name: str, headers: dict
+) -> str | None:
+    """Resolve a name to its exact JamBase artist identifier (e.g. ``jambase:193835``).
+
+    JamBase's ``/events?artistName=`` does a LOOSE text search, so "Sum 41" matches tribute
+    acts like "The Sum Is 41 – ... Tribute" and produces false-positive touring badges. We
+    instead look the name up in ``/artists`` and keep only an EXACT (accent/punctuation-folded)
+    name match, then drive the events query off that artist's identifier. Returns None when no
+    exact match exists, so an artist absent from JamBase simply gets no badge.
+    """
+    try:
+        resp = await client.get(
+            f"{JAMBASE_BASE}/artists",
+            params={"artistName": artist_name, "perPage": 20, "page": 1},
+            headers=headers,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("JamBase artist lookup failed for %r: %s", artist_name, _safe_http_error(exc))
+        return None
+
+    if not data.get("success"):
+        return None
+
+    target = _fuzzy(artist_name)
+    matches = [a for a in (data.get("artists") or []) if _fuzzy(a.get("name", "")) == target]
+    if not matches:
+        return None
+    # Prefer the entry with the most upcoming events (handles stale duplicate JamBase entries).
+    best = max(matches, key=lambda a: a.get("x-numUpcomingEvents") or 0)
+    identifier = best.get("identifier")
+    return identifier if isinstance(identifier, str) and identifier else None
+
+
 async def _resolve_touring_context(
     client: httpx.AsyncClient, artist_name: str, jb_key: str | None
 ) -> dict | None:
@@ -376,22 +412,31 @@ async def _resolve_touring_context(
     next show date. Returns None on ANY failure (missing key, HTTP error, bad JSON, artist not
     on JamBase) so the report degrades gracefully and the badge is simply omitted.
 
+    The events query is filtered by the artist's exact JamBase identifier (see
+    ``_resolve_jambase_artist_id``) rather than a name text search, so tribute bands and unrelated
+    acts can never inflate the count or set a bogus next-show date.
+
     Note: the JamBase trial tier only exposes upcoming events (querying past dates requires the
     paid `expandPastEvents` capability), so this looks forward rather than back.
     """
     if not jb_key:
         return None
 
+    headers = {"Authorization": f"Bearer {jb_key}"}
+    artist_id = await _resolve_jambase_artist_id(client, artist_name, headers)
+    if not artist_id:
+        return None
+
     today = datetime.now(timezone.utc).date()
     date_to = today + timedelta(days=TOURING_WINDOW_DAYS)
     params = {
-        "artistName": artist_name,
+        "artistId": artist_id,
         "eventDateFrom": today.isoformat(),
         "eventDateTo": date_to.isoformat(),
+        "sort": "eventDate",  # explicit ascending sort so page 1 holds the earliest upcoming show
         "perPage": JAMBASE_PER_PAGE,
         "page": 1,
     }
-    headers = {"Authorization": f"Bearer {jb_key}"}
     try:
         resp = await client.get(f"{JAMBASE_BASE}/events", params=params, headers=headers)
         resp.raise_for_status()
