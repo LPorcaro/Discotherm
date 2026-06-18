@@ -23,3 +23,5 @@ This repo is a Node/pnpm "artifacts" monorepo. Deployment uses `.replit` `[deplo
 **Gotcha:** numpy (and all Python deps) must be in BOTH `discoverability-check/requirements.txt` (used by the build) and root `pyproject.toml`/`uv.lock` (used by dev tooling), or the app crashes at runtime.
 
 **Cleaner long-term alternative (not done here):** rebuild natively — logic into the shared Express `api-server`, UI as a react-vite artifact.
+
+**Load-bearing minimum after stripping dead scaffolding:** the deploy only needs `artifacts/api-server/` (its `.replit-artifact/artifact.toml` + a minimal `package.json` — no Node deps/source required), `pnpm-workspace.yaml` with `packages: [artifacts/*]`, a root `package.json`, `scripts/post-merge.sh` (runs `pnpm install --frozen-lockfile`), and a consistent `pnpm-lock.yaml`. You can safely delete `lib/`, the api-server TS `src/`+`build.mjs`+`tsconfig`, root tsconfig files, and `scripts/src` — the Python app and deploy still work. After slimming the workspace, re-run `pnpm install` so the lockfile matches, then confirm `pnpm install --frozen-lockfile` passes (deploy uses frozen).

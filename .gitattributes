@@ -1,0 +1,13 @@
+# GitHub Linguist: keep the repo's language stats focused on the actual app
+# (Python backend + vanilla HTML/CSS/JS frontend), not the Replit workspace
+# tooling that only exists to host/deploy the app on Replit.
+
+pnpm-lock.yaml linguist-generated=true
+uv.lock linguist-generated=true
+pnpm-workspace.yaml linguist-vendored=true
+package.json linguist-vendored=true
+.npmrc linguist-vendored=true
+.replit linguist-vendored=true
+.replitignore linguist-vendored=true
+artifacts/** linguist-vendored=true
+scripts/** linguist-vendored=true

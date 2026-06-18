@@ -18,6 +18,8 @@ Enter any artist name and get a discoverability score out of 100, built from fiv
 
 Each diagnostic's recommendation adapts to the artist's scale (emerging / mid-tier / major, inferred from monthly listeners) — a 0.5% editorial playlist share means something very different for an unsigned artist than for a global superstar, and the tool's language reflects that.
 
+The report also surfaces recent touring activity (via JamBase) as a non-scored context badge.
+
 ## APIs used
 
 **Musixmatch Pro API**
@@ -30,8 +32,8 @@ Each diagnostic's recommendation adapts to the artist's scale (emerging / mid-ti
 - Playlist data — total and editorial playlist placement counts
 - Cross-platform stats — Spotify, Apple Music, TikTok, YouTube, Shazam, Deezer, SoundCloud presence and engagement (TikTok creates, Shazam counts)
 
-**ElevenLabs**
-- Text-to-speech narration of the generated report
+**JamBase API**
+- Live-events data — recent touring activity, surfaced as a non-scored context badge on the report. This lookup is optional and degrades gracefully (the badge is simply omitted) when the key is absent or the artist isn't listed.
 
 ## Tech stack
 
@@ -45,7 +47,7 @@ Each diagnostic's recommendation adapts to the artist's scale (emerging / mid-ti
 
 ```bash
 git clone <this-repo>
-cd discotherm
+cd discotherm/discoverability-check
 pip install -r requirements.txt
 ```
 
@@ -54,10 +56,10 @@ Set the following environment variables (or a `.env` file):
 ```
 MUSIXMATCH_API_KEY=your_key_here
 SONGSTATS_API_KEY=your_key_here
-ELEVENLABS_API_KEY=your_key_here
+JAMBASE_API_KEY=your_key_here   # optional — enables the touring-activity badge
 ```
 
-Then run:
+Then run (from the `discoverability-check/` directory):
 
 ```bash
 uvicorn main:app --reload
@@ -75,6 +77,14 @@ The app will be available at `http://localhost:8000`.
 ## Why this matters
 
 Discoverability isn't a UX inconvenience — it's an economic and creative harm that falls unevenly across artists, genres, and even, as we found while building this, artist names. Discotherm makes that harm visible, measurable, and hopefully actionable.
+
+## Author
+
+Built by **Lorenzo Porcaro**, with **Replit Agent** as a pair-programmer during the contest week (Replit is a Musicathon sponsor). Authored and maintained by Lorenzo Porcaro.
+
+## License
+
+Released under the [MIT License](LICENSE).
 
 ---
 

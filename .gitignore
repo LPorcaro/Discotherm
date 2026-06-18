@@ -51,3 +51,8 @@ Thumbs.db
 # discoverability-check runtime data
 discoverability-check/search_history.json
 discoverability-check/search_history.json.tmp
+
+# Internal Replit Agent context — kept locally for tooling, not for the public repo
+.agents/
+replit.md
+attached_assets/

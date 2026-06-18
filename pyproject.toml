@@ -1,7 +1,7 @@
 [project]
-name = "repl-nix-workspace"
+name = "discotherm"
 version = "0.1.0"
-description = "Add your description here"
+description = "Artist discoverability diagnostic tool (Musixmatch Musicathon 2026)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi==0.115.5",
