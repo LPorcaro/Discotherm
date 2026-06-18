@@ -18,7 +18,7 @@ Enter any artist name and get a discoverability score out of 100, built from fiv
 
 Each diagnostic's recommendation adapts to the artist's scale (emerging / mid-tier / major, inferred from monthly listeners) — a 0.5% editorial playlist share means something very different for an unsigned artist than for a global superstar, and the tool's language reflects that.
 
-The report also surfaces recent touring activity (via JamBase) as a non-scored context badge.
+The report also surfaces upcoming touring activity (via JamBase) as a non-scored context badge.
 
 ## APIs used
 
@@ -32,8 +32,8 @@ The report also surfaces recent touring activity (via JamBase) as a non-scored c
 - Playlist data — total and editorial playlist placement counts
 - Cross-platform stats — Spotify, Apple Music, TikTok, YouTube, Shazam, Deezer, SoundCloud presence and engagement (TikTok creates, Shazam counts)
 
-**JamBase API**
-- Live-events data — recent touring activity, surfaced as a non-scored context badge on the report. This lookup is optional and degrades gracefully (the badge is simply omitted) when the key is absent or the artist isn't listed.
+**JamBase API** (v3 Concert Data API, Bearer auth)
+- Live-events data — upcoming touring activity (the trial tier exposes upcoming events only), surfaced as a non-scored context badge on the report. This lookup is optional and degrades gracefully (the badge is simply omitted) when the key is absent or the artist has no upcoming shows.
 
 ## Tech stack
 

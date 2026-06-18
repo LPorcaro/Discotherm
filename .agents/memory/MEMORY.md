@@ -2,6 +2,7 @@
 - [Songstats raw_stats + TikTok semantics](songstats-stats.md) — tiktok.videos_total = FAN creates ≠ official presence (followers/profile_videos); PLATFORM_GAP "active" deliberately = official presence so the amplify-fan-content rec can fire.
 - [Musixmatch moods API](musixmatch-moods-api.md) — `track.lyrics.analysis.get` returns only an ordered `main_moods` string list (no values); vocab differs from the "25 labels" spec.
 - [GitHub publish prep](github-publish-prep.md) — exclude `.agents/`/`replit.md`/`attached_assets/` (gitignore ≠ untrack); publish via a fresh user-authored commit, not the Git-pane connect flow.
+- [JamBase API](jambase-api.md) — use v3 base `api.data.jambase.com/v3` + Bearer auth (legacy `jb-api/v1` + `apikey=` query is dead); trial keys = upcoming events only (`eventDateFrom` ≥ today).
 - [Release-date API fields](release-date-api-fields.md) — real release date only from Songstats `/artists/catalog` (`release_date`); Musixmatch has none (only metadata-edit `updated_time`); catalogue top is remix-polluted for big artists.
 - [Musixmatch updated_time](musixmatch-updated-time.md) — track `updated_time` is record-maintenance recency, not a release date; almost always recent, so a staleness flag rarely fires.
 - [Scale-aware recommendations](scale-aware-recommendations.md) — diagnostic rec TEXT (not scores) tailored by artist tier; emerging=actionable, mid-tier/major=structural framing.

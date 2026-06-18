@@ -1134,8 +1134,8 @@
         const tc = data.touring_context;
         if (tc && tc.is_active_touring_artist && tc.show_count > 0) {
           const n = tc.show_count.toLocaleString();
-          let label = `🎤 Active touring artist — ${n} show${tc.show_count === 1 ? '' : 's'} in the last 12 months`;
-          if (tc.most_recent_show_date) label += ` · latest ${tc.most_recent_show_date}`;
+          let label = `🎤 Active touring artist — ${n} upcoming show${tc.show_count === 1 ? '' : 's'} in the next 12 months`;
+          if (tc.next_show_date) label += ` · next ${tc.next_show_date}`;
           touringEl.textContent = label;
           touringEl.classList.add('show');
         } else {

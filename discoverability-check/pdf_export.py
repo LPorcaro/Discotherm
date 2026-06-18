@@ -193,12 +193,12 @@ def generate_report_pdf(report: dict, image_bytes: bytes | None = None) -> bytes
     touring = report.get("touring_context")
     if touring:
         shows = touring.get("show_count", 0)
-        recent = touring.get("most_recent_show_date")
+        upcoming = touring.get("next_show_date")
         active = touring.get("is_active_touring_artist")
-        bits = [f"{_fmt(shows)} recent shows"]
-        if recent:
-            bits.append(f"most recent {recent}")
-        bits.append("actively touring" if active else "no recent touring")
+        bits = [f"{_fmt(shows)} upcoming shows"]
+        if upcoming:
+            bits.append(f"next {upcoming}")
+        bits.append("actively touring" if active else "no upcoming shows")
         story.append(Paragraph("🎤 Touring: " + " · ".join(bits), detail_style))
         story.append(Spacer(1, 4))
 

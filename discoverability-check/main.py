@@ -47,7 +47,7 @@ MUSIXMATCH_BASE = "https://api.musixmatch.com/ws/1.1"
 JAMBASE_BASE = "https://api.data.jambase.com/v3"
 SONGSTATS_BASE = "https://api.songstats.com/enterprise/v1"
 PAGES_TO_FETCH = 5   # 5 pages × 100 = up to 500 candidate tracks per artist_id
-TOURING_WINDOW_DAYS = 365  # how far back JamBase events are counted for touring context
+TOURING_WINDOW_DAYS = 365  # how far ahead upcoming JamBase events are counted for touring context
 JAMBASE_PER_PAGE = 100     # JamBase events page size
 PAGE_SIZE = 100
 ARTIST_SEARCH_PAGE_SIZE = 30  # wide enough to surface fragmented duplicate artist records
@@ -370,28 +370,30 @@ def _event_dates(events: list[dict]) -> list[str]:
 async def _resolve_touring_context(
     client: httpx.AsyncClient, artist_name: str, jb_key: str | None
 ) -> dict | None:
-    """Annotate touring activity from JamBase events (NOT a scored diagnostic).
+    """Annotate touring activity from upcoming JamBase events (NOT a scored diagnostic).
 
-    Counts the artist's events over the trailing TOURING_WINDOW_DAYS window and finds the
-    most recent show date. Returns None on ANY failure (missing key, HTTP error, bad JSON,
-    artist not on JamBase) so the report degrades gracefully and the badge is simply omitted.
+    Counts the artist's upcoming events over the next TOURING_WINDOW_DAYS window and finds the
+    next show date. Returns None on ANY failure (missing key, HTTP error, bad JSON, artist not
+    on JamBase) so the report degrades gracefully and the badge is simply omitted.
+
+    Note: the JamBase trial tier only exposes upcoming events (querying past dates requires the
+    paid `expandPastEvents` capability), so this looks forward rather than back.
     """
     if not jb_key:
         return None
 
     today = datetime.now(timezone.utc).date()
-    date_from = today - timedelta(days=TOURING_WINDOW_DAYS)
-    base_params = {
+    date_to = today + timedelta(days=TOURING_WINDOW_DAYS)
+    params = {
         "artistName": artist_name,
-        "eventDateFrom": date_from.isoformat(),
-        "eventDateTo": today.isoformat(),
+        "eventDateFrom": today.isoformat(),
+        "eventDateTo": date_to.isoformat(),
         "perPage": JAMBASE_PER_PAGE,
+        "page": 1,
     }
     headers = {"Authorization": f"Bearer {jb_key}"}
     try:
-        resp = await client.get(
-            f"{JAMBASE_BASE}/events", params={**base_params, "page": 1}, headers=headers
-        )
+        resp = await client.get(f"{JAMBASE_BASE}/events", params=params, headers=headers)
         resp.raise_for_status()
         data = resp.json()
     except (httpx.HTTPError, ValueError) as exc:
@@ -409,30 +411,14 @@ async def _resolve_touring_context(
     if not isinstance(show_count, int):
         show_count = len(events)
 
+    # Events come back sorted ascending by date (sort=eventDate), so the earliest upcoming show
+    # is on page 1 — no extra pagination needed to find the next show date.
     dates = _event_dates(events)
-
-    # JamBase paginates events in date order, so the most recent show in a past window can
-    # sit on the LAST page. When the window spans multiple pages, fetch the last page too
-    # (bounded: one extra request) and fold its dates in so most_recent stays accurate
-    # regardless of ascending/descending ordering.
-    total_pages = pagination.get("totalPages")
-    if not isinstance(total_pages, int):
-        total_pages = (show_count + JAMBASE_PER_PAGE - 1) // JAMBASE_PER_PAGE if show_count else 1
-    if total_pages > 1:
-        try:
-            last = await client.get(
-                f"{JAMBASE_BASE}/events", params={**base_params, "page": total_pages}, headers=headers
-            )
-            last.raise_for_status()
-            dates += _event_dates(last.json().get("events") or [])
-        except (httpx.HTTPError, ValueError) as exc:
-            logger.warning("JamBase last-page fetch failed for %r: %s", artist_name, _safe_http_error(exc))
-
-    most_recent = max(dates) if dates else None
+    next_show = min(dates) if dates else None
 
     return {
         "show_count": show_count,
-        "most_recent_show_date": most_recent,
+        "next_show_date": next_show,
         "is_active_touring_artist": show_count > 0,
     }
 
