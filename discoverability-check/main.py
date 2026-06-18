@@ -367,10 +367,10 @@ def _event_dates(events: list[dict]) -> list[str]:
     ]
 
 
-async def _resolve_jambase_artist_id(
+async def _resolve_jambase_artist(
     client: httpx.AsyncClient, artist_name: str, headers: dict
-) -> str | None:
-    """Resolve a name to its exact JamBase artist identifier (e.g. ``jambase:193835``).
+) -> dict | None:
+    """Resolve a name to its exact JamBase artist record (carrying ``identifier`` and ``url``).
 
     JamBase's ``/events?artistName=`` does a LOOSE text search, so "Sum 41" matches tribute
     acts like "The Sum Is 41 – ... Tribute" and produces false-positive touring badges. We
@@ -400,7 +400,7 @@ async def _resolve_jambase_artist_id(
     # Prefer the entry with the most upcoming events (handles stale duplicate JamBase entries).
     best = max(matches, key=lambda a: a.get("x-numUpcomingEvents") or 0)
     identifier = best.get("identifier")
-    return identifier if isinstance(identifier, str) and identifier else None
+    return best if isinstance(identifier, str) and identifier else None
 
 
 async def _resolve_touring_context(
@@ -413,7 +413,7 @@ async def _resolve_touring_context(
     on JamBase) so the report degrades gracefully and the badge is simply omitted.
 
     The events query is filtered by the artist's exact JamBase identifier (see
-    ``_resolve_jambase_artist_id``) rather than a name text search, so tribute bands and unrelated
+    ``_resolve_jambase_artist``) rather than a name text search, so tribute bands and unrelated
     acts can never inflate the count or set a bogus next-show date.
 
     Note: the JamBase trial tier only exposes upcoming events (querying past dates requires the
@@ -423,9 +423,18 @@ async def _resolve_touring_context(
         return None
 
     headers = {"Authorization": f"Bearer {jb_key}"}
-    artist_id = await _resolve_jambase_artist_id(client, artist_name, headers)
-    if not artist_id:
+    artist = await _resolve_jambase_artist(client, artist_name, headers)
+    if not artist:
         return None
+    artist_id = artist["identifier"]
+    artist_url = artist.get("url")
+    # Only surface the link when it is an actual JamBase artist page (the URL comes straight from
+    # JamBase, so this just guarantees the outbound link can never point anywhere else).
+    jambase_url = (
+        artist_url
+        if isinstance(artist_url, str) and artist_url.startswith("https://www.jambase.com/")
+        else None
+    )
 
     today = datetime.now(timezone.utc).date()
     date_to = today + timedelta(days=TOURING_WINDOW_DAYS)
@@ -465,6 +474,7 @@ async def _resolve_touring_context(
         "show_count": show_count,
         "next_show_date": next_show,
         "is_active_touring_artist": show_count > 0,
+        "jambase_url": jambase_url,
     }
 
 

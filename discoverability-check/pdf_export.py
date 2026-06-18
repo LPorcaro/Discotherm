@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 from datetime import datetime, timezone
+from html import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT, TA_RIGHT
@@ -199,6 +200,9 @@ def generate_report_pdf(report: dict, image_bytes: bytes | None = None) -> bytes
         if upcoming:
             bits.append(f"next {upcoming}")
         bits.append("actively touring" if active else "no upcoming shows")
+        jb_url = touring.get("jambase_url")
+        if jb_url:
+            bits.append(f'<a href="{escape(jb_url, quote=True)}" color="#0aa3b0">View on JamBase</a>')
         story.append(Paragraph("🎤 Touring: " + " · ".join(bits), detail_style))
         story.append(Spacer(1, 4))
 

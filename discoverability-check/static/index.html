@@ -380,6 +380,14 @@
       border: 1px solid color-mix(in srgb, var(--cyan) 42%, transparent);
     }
     .touring-badge.show { display: inline-flex; }
+    .touring-badge .touring-link {
+      color: color-mix(in srgb, var(--cyan) 92%, white);
+      font-weight: 700;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      white-space: nowrap;
+    }
+    .touring-badge .touring-link:hover { opacity: 0.82; }
 
     /* ── Songstats stat chips ── */
     .stat-chips {
@@ -1101,7 +1109,19 @@
           const n = tc.show_count.toLocaleString();
           let label = `🎤 Active touring artist — ${n} upcoming show${tc.show_count === 1 ? '' : 's'} in the next 12 months`;
           if (tc.next_show_date) label += ` · next ${tc.next_show_date}`;
-          touringEl.textContent = label;
+          touringEl.textContent = '';
+          touringEl.appendChild(document.createTextNode(label));
+          // Link out to the artist's JamBase page when we have a verified URL.
+          if (tc.jambase_url) {
+            const a = document.createElement('a');
+            a.className = 'touring-link';
+            a.href = tc.jambase_url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = 'View on JamBase ↗';
+            touringEl.appendChild(document.createTextNode('\u00A0· '));
+            touringEl.appendChild(a);
+          }
           touringEl.classList.add('show');
         } else {
           touringEl.textContent = '';
