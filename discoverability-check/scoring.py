@@ -310,28 +310,32 @@ def _playlist_reach(stats: dict, tier: str = "emerging") -> dict:
     # is not penalised the same as a tiny one just because the *ratio* is low:
     #   - relative component: 10 % editorial ratio → 100 (rare, so generous scale)
     #   - absolute component: log-scaled count, 1000 editorial playlists → 100
+    # Weighted 70 % absolute / 30 % relative: the denominator (total playlists) is
+    # huge for major artists, so the ratio collapses even when hundreds of genuine
+    # editorial placements make the absolute reach excellent. Favouring the absolute
+    # component stops big catalogues from crashing while still scoring tiny editorial
+    # footprints (few real placements) low.
     pct_component = min(editorial_pct * 10, 100)
     abs_component = min(math.log10(editorial + 1) / math.log10(1000) * 100, 100)
-    score = round(_clamp(0.5 * pct_component + 0.5 * abs_component))
+    score = round(_clamp(0.7 * abs_component + 0.3 * pct_component))
 
     established = tier in ("mid-tier", "major")
     following = _following_phrase(tier)
     if score >= 60:
         if established:
             rec = (
-                f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%), "
-                f"a strong editorial footprint for {following} in both absolute ({editorial} "
-                "placements) and relative terms. At this scale a sustained editorial presence is "
-                "itself the competitive moat — a structural advantage that holds only while "
-                "release cadence keeps the catalogue algorithmically live."
+                f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%) — "
+                f"a strong absolute editorial footprint ({editorial} placements) for {following}. "
+                "At catalogue scale the editorial share reads modest, but the sheer volume of "
+                "editorial placements is itself the competitive moat — a structural advantage that "
+                "holds only while release cadence keeps the catalogue algorithmically live."
             )
         else:
             rec = (
-                f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%), "
-                f"a strong editorial footprint in both absolute ({editorial} placements) and "
-                "relative terms. Sustain it by submitting every new release to Spotify editorial "
-                "at least 7 days before release and maintaining release cadence to stay in the "
-                "algorithm."
+                f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%) — "
+                f"a strong absolute editorial footprint ({editorial} placements). Sustain it by "
+                "submitting every new release to Spotify editorial at least 7 days before release "
+                "and maintaining release cadence to stay in the algorithm."
             )
     elif score >= 30:
         if established:
