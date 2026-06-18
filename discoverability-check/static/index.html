@@ -65,20 +65,20 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 10px;
+      gap: 16px;
     }
-    .header-title .logo { height: 40px; width: auto; display: block; }
+    .header-title .logo { height: 68px; width: auto; display: block; }
     .header h1 {
       font-family: 'Space Grotesk', sans-serif;
-      font-size: 2rem;
+      font-size: 3.4rem;
       font-weight: 700;
       letter-spacing: -0.04em;
       color: var(--text);
     }
     .header h1 span { color: #22d3ee; }
     .header p {
-      margin-top: 8px;
-      font-size: 0.95rem;
+      margin-top: 12px;
+      font-size: 1.15rem;
       color: var(--muted);
       letter-spacing: 0.01em;
     }
@@ -178,6 +178,125 @@
       font-size: 0.82rem;
     }
     #pdf-btn { margin-left: auto; align-self: center; flex-shrink: 0; }
+
+    /* ── Help button + About modal ── */
+    .help-btn {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 60;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 1.2rem;
+      font-weight: 700;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .help-btn:hover:not(:disabled) {
+      color: var(--cyan);
+      border-color: var(--cyan);
+      opacity: 1;
+      transform: translateY(-1px);
+    }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.7);
+      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+    .modal-overlay.show { opacity: 1; }
+    .modal-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      max-width: 520px;
+      width: 100%;
+      max-height: 85vh;
+      overflow-y: auto;
+      padding: 32px;
+      position: relative;
+      transform: translateY(8px);
+      transition: transform 0.2s ease;
+    }
+    .modal-overlay.show .modal-card { transform: translateY(0); }
+    .modal-close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border-radius: 8px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 1.3rem;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-close:hover:not(:disabled) {
+      color: var(--text);
+      border-color: var(--cyan);
+      opacity: 1;
+      transform: none;
+    }
+    .modal-card h2 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: var(--text);
+      margin-bottom: 16px;
+      padding-right: 32px;
+    }
+    .modal-card h2 span { color: #22d3ee; }
+    .modal-card p {
+      font-size: 0.92rem;
+      line-height: 1.6;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+    .modal-card p:last-child { margin-bottom: 0; }
+    .modal-card p strong { color: var(--text); font-weight: 600; }
+    .about-diagnostics {
+      list-style: none;
+      margin: 0 0 18px;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .about-diagnostics li {
+      font-size: 0.88rem;
+      line-height: 1.5;
+      color: var(--muted);
+      padding-left: 14px;
+      border-left: 2px solid var(--cyan);
+    }
+    .about-diagnostics li strong {
+      color: var(--text);
+      font-weight: 600;
+      display: block;
+      letter-spacing: 0.02em;
+    }
 
     /* ── Loading ── */
     .loading {
@@ -556,12 +675,19 @@
       .container { gap: 28px; }
       .score-card { padding: 22px; }
       .diagnostic-card { padding: 18px; }
+      .header-title .logo { height: 56px; }
+      .header h1 { font-size: 2.7rem; }
     }
 
     /* ── Responsive: mobile ── */
     @media (max-width: 480px) {
       body { padding: 28px 14px 56px; }
-      .header h1 { font-size: 1.6rem; }
+      .header-title { gap: 12px; }
+      .header-title .logo { height: 44px; }
+      .header h1 { font-size: 2rem; }
+      .header p { font-size: 1rem; }
+      .help-btn { top: 14px; right: 14px; width: 36px; height: 36px; }
+      .modal-card { padding: 24px; }
 
       /* Header block: stack thumbnail, name/meta, and download button vertically */
       .results-header {
@@ -593,6 +719,38 @@
   </style>
 </head>
 <body>
+  <button id="help-btn" class="help-btn" aria-label="About Discotherm" title="About Discotherm" aria-haspopup="dialog" aria-controls="about-modal">?</button>
+
+  <div class="modal-overlay" id="about-modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <button class="modal-close" id="about-close" aria-label="Close">&times;</button>
+      <h2 id="about-title">About <span>Discotherm</span></h2>
+      <p>
+        Discotherm is an artist <strong>discoverability diagnostic</strong> — it measures how
+        easily a new listener could stumble onto an artist and connect with their music. It is
+        <strong>not a popularity tracker</strong>: a huge streaming count doesn't guarantee an
+        artist is easy to discover, and a small one doesn't mean they're invisible.
+      </p>
+      <p>It runs five diagnostics:</p>
+      <ul class="about-diagnostics">
+        <li><strong>Catalogue Depth</strong>Share of tracks with full lyric metadata (lyrics + synced lyrics) that makes them visible to lyric-driven discovery.</li>
+        <li><strong>Stream Concentration</strong>Whether listening is spread across the catalogue or piled onto just one or two tracks.</li>
+        <li><strong>Playlist Reach</strong>How far the music extends across editorial and algorithmic playlists.</li>
+        <li><strong>Mood Coherence</strong>How consistent the emotional signature of the lyrics is across the catalogue.</li>
+        <li><strong>Platform Gap</strong>Where the artist is present — or missing — across streaming and social platforms.</li>
+      </ul>
+      <p>
+        Powered by two data sources. <strong>Musixmatch</strong> supplies catalogue search,
+        catalogue metadata, rich-sync coverage, and lyric mood analysis. <strong>Songstats</strong>
+        supplies streaming numbers, playlist placements, and cross-platform stats.
+      </p>
+      <p>
+        Discoverability matters because being hard to find is a <strong>measurable harm</strong> —
+        great music that no one can reach is a problem you can actually diagnose and fix.
+      </p>
+    </div>
+  </div>
+
   <div class="container">
 
     <div class="hero" id="hero">
@@ -1121,6 +1279,34 @@
 
     btn.addEventListener('click', runReport);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') runReport(); });
+
+    // ── About modal ──
+    const aboutModal = document.getElementById('about-modal');
+    const helpBtn    = document.getElementById('help-btn');
+    const aboutClose = document.getElementById('about-close');
+    let aboutCloseTimer = null;
+    function openAbout() {
+      if (!aboutModal.hidden) return;
+      if (aboutCloseTimer) { clearTimeout(aboutCloseTimer); aboutCloseTimer = null; }
+      aboutModal.hidden = false;
+      requestAnimationFrame(() => {
+        aboutModal.classList.add('show');
+        aboutClose.focus();
+      });
+    }
+    function closeAbout() {
+      if (aboutModal.hidden) return;
+      aboutModal.classList.remove('show');
+      if (aboutCloseTimer) clearTimeout(aboutCloseTimer);
+      aboutCloseTimer = setTimeout(() => { aboutModal.hidden = true; aboutCloseTimer = null; }, 200);
+      helpBtn.focus();
+    }
+    helpBtn.addEventListener('click', openAbout);
+    aboutClose.addEventListener('click', closeAbout);
+    aboutModal.addEventListener('click', e => { if (e.target === aboutModal) closeAbout(); });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && !aboutModal.hidden) closeAbout();
+    });
 
     // ── Recently searched ──
     const recentBox   = document.getElementById('recent');
