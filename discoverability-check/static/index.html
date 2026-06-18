@@ -1085,7 +1085,7 @@
 
     let reportInFlight = false;
 
-    async function runReport(artistId) {
+    async function runReport() {
       // Reentrancy guard: the Enter-key handler can fire while a request is already running
       // (the disabled button only blocks clicks), so ensure only one report runs at a time —
       // this makes the latest completed report deterministic and prevents request races.
@@ -1102,14 +1102,10 @@
       loadMsg.textContent = 'Fetching data…';
 
       try {
-        const payload = { name };
-        // When the report was triggered from an autocomplete suggestion, pass its Musixmatch
-        // artist_id so the backend skips fuzzy disambiguation and fetches tracks directly.
-        if (Number.isFinite(artistId)) payload.artist_id = artistId;
         const res = await fetch('/artist/report', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ name }),
         });
 
         const data = await res.json();
@@ -1306,7 +1302,7 @@
 
     // ── Artist autocomplete ──
     const suggestList = document.getElementById('suggest-list');
-    let suggestItems = [];      // [{artist_id, artist_name}]
+    let suggestItems = [];      // [{artist_name}]
     let activeIndex = -1;       // keyboard-highlighted row, -1 = none
     let suggestSeq = 0;         // guards against out-of-order async responses
     let debounceTimer = null;
@@ -1343,7 +1339,7 @@
       if (!s) return;
       input.value = s.artist_name;
       hideSuggestions();
-      runReport(s.artist_id);
+      runReport();
     }
 
     async function fetchSuggestions(q) {
@@ -1367,7 +1363,7 @@
       const q = input.value.trim();
       if (debounceTimer) clearTimeout(debounceTimer);
       if (q.length < 3) { hideSuggestions(); return; }
-      debounceTimer = setTimeout(() => fetchSuggestions(q), 300);
+      debounceTimer = setTimeout(() => fetchSuggestions(q), 150);
     });
 
     input.addEventListener('keydown', e => {
