@@ -114,7 +114,33 @@ def _catalogue_depth(tracks: list[dict], tier: str = "emerging") -> dict:
 
     established = tier in ("mid-tier", "major")
     following = _following_phrase(tier)
-    if score >= 60:
+    if with_both == 0:
+        # Zero-coverage edge case: the templated "top 20 tracks" / partial-gap phrasing reads
+        # oddly when nothing has any coverage at all. Scale the starter subset to catalogue size
+        # rather than hardcoding 20.
+        starter = min(10, total)
+        starter_phrase = (
+            "your most popular track"
+            if starter == 1
+            else f"your top {starter} tracks (your most popular songs)"
+        )
+        if established:
+            rec = (
+                f"None of the {total} tracks carry both lyrics and synced lyrics — for "
+                f"{following}, a catalogue this established with zero lyric-search visibility "
+                "points to a structural metadata-delivery gap (licensing/territory or legacy "
+                "distribution) rather than ordinary pitching effort. The catalogue is currently "
+                "invisible to every lyric-driven discovery surface; the priority is auditing why "
+                "richsync delivery never reached it at all."
+            )
+        else:
+            rec = (
+                f"None of the {total} tracks carry lyrics or synced lyrics — the catalogue has no "
+                "lyric-search visibility whatsoever and is invisible to lyric-driven discovery "
+                f"surfaces. Start small and concrete: add lyrics and richsync for {starter_phrase} "
+                "first, then backfill the rest via your distributor's metadata delivery pipeline."
+            )
+    elif score >= 60:
         if established:
             rec = (
                 f"{with_both}/{total} tracks carry full metadata (lyrics + synced lyrics) — "
@@ -191,6 +217,22 @@ def _stream_concentration(tracks: list[dict], tier: str = "emerging") -> dict:
         # Sample too small to compute a meaningful concentration ratio.
         sorted_favs = sorted(favs, reverse=True)
         top3_favs = sum(sorted_favs[:3])
+        if total_favs == 0:
+            insufficient_rec = (
+                "No track favourites recorded across the catalogue yet — there is no save "
+                "signal at all to assess how listening is distributed across tracks. "
+                "Concentration only becomes measurable once tracks start accumulating saves; "
+                "for now, focus on driving any initial traction through playlist pitching and "
+                "social campaigns across the whole catalogue."
+            )
+        else:
+            insufficient_rec = (
+                f"Only {total_favs} total favourites across the catalogue — the sample size "
+                "is too small to reliably assess stream concentration. This metric becomes "
+                "meaningful once the catalogue has accumulated more listener saves; revisit "
+                "it then. In the meantime, focus on driving saves through playlist pitching "
+                "and social campaigns across the full catalogue."
+            )
         return {
             "name": "STREAM_CONCENTRATION",
             "score": 50,
@@ -201,13 +243,7 @@ def _stream_concentration(tracks: list[dict], tier: str = "emerging") -> dict:
                 "top3_favourites": top3_favs,
                 "concentration_pct": None,
             },
-            "recommendation": (
-                f"Only {total_favs} total favourites across the catalogue — the sample size "
-                "is too small to reliably assess stream concentration. This metric becomes "
-                "meaningful once the catalogue has accumulated more listener saves; revisit "
-                "it then. In the meantime, focus on driving saves through playlist pitching "
-                "and social campaigns across the full catalogue."
-            ),
+            "recommendation": insufficient_rec,
         }
 
     sorted_favs = sorted(favs, reverse=True)
@@ -321,7 +357,26 @@ def _playlist_reach(stats: dict, tier: str = "emerging") -> dict:
 
     established = tier in ("mid-tier", "major")
     following = _following_phrase(tier)
-    if score >= 60:
+    if editorial == 0:
+        # Zero-editorial edge case: the "almost entirely reliant" / "protect the editorial
+        # relationships you have" phrasing assumes some editorial footprint exists. At zero
+        # (with playlist data present), say so plainly instead.
+        if established:
+            rec = (
+                f"None of this artist's {total} current playlist placements are editorial despite "
+                f"{following} — a complete absence of human-curated editorial reach that is "
+                "striking at this scale and points to a structural eligibility gap "
+                "(catalogue/metadata or territory mix) rather than ordinary pitching effort."
+            )
+        else:
+            rec = (
+                f"None of this artist's {total} current playlist placements are editorial (0%) — "
+                "the catalogue relies entirely on organic/algorithmic adds with no editorial "
+                "foothold yet. Make Spotify for Artists editorial pitching a release-day priority "
+                "for every upcoming track (submit at least 7 days early), and check that metadata "
+                "(genre, mood, accurate release dates) isn't limiting editorial eligibility."
+            )
+    elif score >= 60:
         if established:
             rec = (
                 f"{editorial} of {total} current playlists are editorial ({editorial_pct:.2f}%) — "
