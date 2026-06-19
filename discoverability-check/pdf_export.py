@@ -35,6 +35,7 @@ _STATUS_COLORS = {
     "warning": colors.HexColor("#f59e0b"),    # orange
     "critical": colors.HexColor("#ef4444"),   # red
     "insufficient_data": colors.HexColor("#94a3b8"),  # slate grey
+    "not_applicable": colors.HexColor("#94a3b8"),     # slate grey
 }
 _TEXT = colors.HexColor("#0f172a")
 _MUTED = colors.HexColor("#64748b")

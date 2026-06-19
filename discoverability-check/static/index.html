@@ -502,6 +502,22 @@
     .status-badge.good    { background: rgba(0,229,255,0.12); color: var(--cyan); }
     .status-badge.warning { background: rgba(255,149,0,0.12); color: var(--orange); }
     .status-badge.critical{ background: rgba(255,59,48,0.12); color: var(--red); }
+    .status-badge.neutral { background: rgba(160,170,190,0.14); color: #aab2c5; }
+
+    .instrumental-note {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin: -4px 0 18px;
+      padding: 10px 14px;
+      border: 1px solid rgba(160,170,190,0.22);
+      border-radius: 12px;
+      background: rgba(160,170,190,0.08);
+      color: #aab2c5;
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+    .instrumental-note.show { display: flex; }
 
     .score-number {
       font-family: 'Space Grotesk', sans-serif;
@@ -808,6 +824,11 @@
         <button id="pdf-btn" class="btn-secondary" type="button">📄 Download PDF Report</button>
       </div>
 
+      <div class="instrumental-note" id="res-instrumental-note">
+        <span>🎹</span>
+        <span>Primarily instrumental catalogue — lyric-based diagnostics adjusted accordingly.</span>
+      </div>
+
       <div class="stat-chips" id="res-stat-chips"></div>
 
       <span class="touring-badge" id="res-touring-badge"></span>
@@ -847,7 +868,15 @@
     const results = document.getElementById('results');
 
     function statusClass(status) {
-      return { good: 'good', warning: 'warning', critical: 'critical' }[status] || 'warning';
+      return {
+        good: 'good', warning: 'warning', critical: 'critical',
+        insufficient_data: 'neutral', not_applicable: 'neutral',
+      }[status] || 'warning';
+    }
+
+    // Human-readable diagnostic status badge label.
+    function statusLabel(status) {
+      return (status || '').replace(/_/g, ' ');
     }
 
     // Compact number formatter: 14796537 → "14.8M", 2609194 → "2.6M", 625 → "625".
@@ -1040,7 +1069,7 @@
             <span class="diag-name">${d.name.replace(/_/g,' ')}</span>
             <div class="diag-right">
               <span class="diag-score ${sc}" data-target="${d.score}">0</span>
-              <span class="status-badge ${sc}">${d.status}</span>
+              <span class="status-badge ${sc}">${statusLabel(d.status)}</span>
             </div>
           </div>
           <div class="diag-bar-track">
@@ -1121,6 +1150,11 @@
         document.getElementById('res-artist-name').textContent = data.artist_name;
         document.getElementById('res-track-count').textContent =
           `${data.total_tracks.toLocaleString()} track${data.total_tracks === 1 ? '' : 's'} found`;
+
+        // Instrumental note: shown when the catalogue is majority-instrumental (lyric-based
+        // diagnostics get marked not_applicable server-side).
+        const instrEl = document.getElementById('res-instrumental-note');
+        instrEl.classList.toggle('show', Number(data.instrumental_pct) >= 60);
 
         // Wire the PDF export to the *resolved* artist name so the download matches what's shown.
         document.getElementById('pdf-btn').onclick = () => {

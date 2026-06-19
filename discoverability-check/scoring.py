@@ -91,7 +91,9 @@ def _scale_factor(stats: dict) -> float:
 # has_lyrics=1 and has_richsync=1 (synced lyrics).  A catalogue that is
 # invisible to lyric-based search / karaoke / sync placements scores low.
 # ---------------------------------------------------------------------------
-def _catalogue_depth(tracks: list[dict], tier: str = "emerging") -> dict:
+def _catalogue_depth(
+    tracks: list[dict], tier: str = "emerging", primarily_instrumental: bool = False
+) -> dict:
     total = len(tracks)
     if total == 0:
         return {
@@ -111,6 +113,26 @@ def _catalogue_depth(tracks: list[dict], tier: str = "emerging") -> dict:
     )
     ratio = with_both / total  # 0–1
     score = round(_clamp(ratio * 100))
+
+    if primarily_instrumental:
+        # For a majority-instrumental catalogue there is nothing to transcribe, so lyric +
+        # richsync coverage isn't a meaningful discoverability signal. Mark not_applicable so
+        # it's excluded from the overall average (same treatment as insufficient_data) and
+        # redirect the framing toward the non-lyrical metadata that IS measurable.
+        return {
+            "name": "CATALOGUE_DEPTH",
+            "score": score,
+            "status": "not_applicable",
+            "detail": {"tracks_total": total, "tracks_with_full_metadata": with_both},
+            "recommendation": (
+                "This artist's catalogue is majority-instrumental, so full lyric/synced-lyric "
+                "metadata isn't a meaningful discoverability signal — there is simply nothing to "
+                "transcribe, and lyric-driven discovery surfaces are inherently less relevant "
+                "here. This diagnostic is excluded from the overall score. Focus instead on the "
+                "non-lyrical metadata that does drive instrumental discovery: complete and "
+                "accurate genre tags, mood tags, and album/production credits."
+            ),
+        }
 
     established = tier in ("mid-tier", "major")
     following = _following_phrase(tier)
@@ -476,12 +498,39 @@ def _playlist_reach(stats: dict, tier: str = "emerging") -> dict:
 # similarity. A high average similarity = a consistent emotional profile that is
 # easy for recommendation engines to categorise; a low one = a scattered profile.
 # ---------------------------------------------------------------------------
-def _mood_coherence(track_moods: list[list[str]], skipped: int) -> dict:
+def _mood_coherence(
+    track_moods: list[list[str]], skipped: int, primarily_instrumental: bool = False
+) -> dict:
     # Keep only tracks that actually returned moods.
     valid = [moods for moods in track_moods if moods]
     analyzed = len(valid)
 
     if analyzed < 5:
+        if primarily_instrumental:
+            # Lyric-based mood analysis has nothing to read for instrumental tracks, so the low
+            # analysed count reflects the instrumental nature of the catalogue, not missing data.
+            # Mark not_applicable so it's excluded from the overall average rather than penalising
+            # (or being flagged as a gap on) the artist.
+            return {
+                "name": "MOOD_COHERENCE",
+                "score": 50,
+                "status": "not_applicable",
+                "detail": {
+                    "tracks_analyzed": analyzed,
+                    "tracks_skipped": skipped,
+                    "avg_cosine_similarity": None,
+                    "top_moods": [],
+                },
+                "recommendation": (
+                    f"Only {analyzed} of the top tracks returned usable lyric mood analysis "
+                    f"({skipped} skipped). For this artist that reflects a majority-instrumental "
+                    "catalogue — lyric-based mood analysis has no lyrics to read — rather than "
+                    "missing or restricted data. Lyric-driven mood classification is inherently "
+                    "less relevant here, so this diagnostic is excluded from the overall score. "
+                    "Instrumental mood discovery instead leans on accurate genre and mood tags in "
+                    "your release metadata."
+                ),
+            }
         if analyzed == 0:
             mood_rec = (
                 f"None of the top tracks returned usable lyric mood analysis "
@@ -798,20 +847,30 @@ def compute_discoverability_score(
     """
     mood_data = mood_data or {"track_moods": [], "skipped": 0}
 
+    # Instrumental awareness: when most of the catalogue has no lyrics, lyric-driven
+    # diagnostics (CATALOGUE_DEPTH, MOOD_COHERENCE) aren't meaningful signals and are marked
+    # not_applicable downstream so they neither help nor hurt the overall score.
+    total_tracks = len(tracks)
+    instrumental_count = sum(1 for t in tracks if t.get("instrumental") == 1)
+    instrumental_pct = round((instrumental_count / total_tracks) * 100, 1) if total_tracks else 0.0
+    primarily_instrumental = instrumental_pct >= 60
+
     tier = _artist_tier(stats)
-    d_catalogue = _catalogue_depth(tracks, tier)
+    d_catalogue = _catalogue_depth(tracks, tier, primarily_instrumental)
     d_concentration = _stream_concentration(tracks, tier)
     d_reach = _playlist_reach(stats, tier)
     d_mood = _mood_coherence(
         mood_data.get("track_moods", []),
         mood_data.get("skipped", 0),
+        primarily_instrumental,
     )
     d_platform = _platform_gap(stats, logger=logger)
 
     diagnostics = [d_catalogue, d_concentration, d_reach, d_mood, d_platform]
-    # Average only over diagnostics with usable data; insufficient_data ones are
-    # excluded so they neither help nor hurt the overall score.
-    valid = [d for d in diagnostics if d["status"] != "insufficient_data"]
+    # Average only over diagnostics with usable data; insufficient_data and not_applicable
+    # ones are excluded so they neither help nor hurt the overall score.
+    excluded_statuses = ("insufficient_data", "not_applicable")
+    valid = [d for d in diagnostics if d["status"] not in excluded_statuses]
     diag_avg = sum(d["score"] for d in valid) / len(valid) if valid else 0
     # Blend the diagnostic average (80%) with a reach-magnitude scale factor (20%) so the
     # headline score reflects audience scale alongside catalogue quality. Only this number
@@ -827,5 +886,6 @@ def compute_discoverability_score(
             "Includes a modest scale-adjustment reflecting reach magnitude alongside the "
             "five core diagnostics."
         ),
+        "instrumental_pct": instrumental_pct,
         "diagnostics": diagnostics,
     }

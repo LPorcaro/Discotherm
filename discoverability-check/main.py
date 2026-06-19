@@ -836,6 +836,7 @@ async def _build_artist_report(name: str) -> dict:
         "overall_score": scored["overall_score"],
         "overall_status": scored["overall_status"],
         "overall_score_note": scored["overall_score_note"],
+        "instrumental_pct": scored["instrumental_pct"],
         "diagnostics": scored["diagnostics"],
         "touring_context": touring_context,
         "stat_chips": {
