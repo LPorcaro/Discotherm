@@ -1095,16 +1095,27 @@
           return;
         }
 
-        // Populate header
-        const PLACEHOLDER_THUMB =
-          "data:image/svg+xml;utf8," +
-          encodeURIComponent(
+        // Populate header. When no reliable artist image is available, render a neutral
+        // initials avatar rather than risk showing a wrong (e.g. compilation) cover.
+        const initialsAvatar = (name) => {
+          const initials = (name || '?')
+            .trim()
+            .split(/\s+/)
+            .slice(0, 2)
+            .map((w) => w.charAt(0).toUpperCase())
+            .join('') || '?';
+          const svg =
             "<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'>" +
-            "<rect width='80' height='80' fill='%23cfcfcf'/></svg>"
-          );
+            "<rect width='80' height='80' fill='#2a2f3a'/>" +
+            "<text x='50%' y='50%' dy='.35em' text-anchor='middle' " +
+            "font-family='system-ui,sans-serif' font-size='30' font-weight='600' " +
+            "fill='#cfd6e4'>" + initials + "</text></svg>";
+          return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+        };
         const thumbEl = document.getElementById('res-artist-thumb');
-        thumbEl.onerror = () => { thumbEl.onerror = null; thumbEl.src = PLACEHOLDER_THUMB; };
-        thumbEl.src = data.artist_image_url || PLACEHOLDER_THUMB;
+        const fallback = initialsAvatar(data.artist_name);
+        thumbEl.onerror = () => { thumbEl.onerror = null; thumbEl.src = fallback; };
+        thumbEl.src = data.artist_image_url || fallback;
         thumbEl.alt = data.artist_name;
 
         document.getElementById('res-artist-name').textContent = data.artist_name;

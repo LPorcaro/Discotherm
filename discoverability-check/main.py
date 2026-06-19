@@ -478,10 +478,27 @@ async def _resolve_touring_context(
     }
 
 
-async def _fetch_artist_image(client: httpx.AsyncClient, tracks: list[dict]) -> str | None:
-    """Use the highest-rated track's Spotify id to fetch album art via Spotify oEmbed (no auth)."""
+async def _fetch_artist_image(
+    client: httpx.AsyncClient, tracks: list[dict], resolved_name: str
+) -> str | None:
+    """Fallback artist image: album art of the artist's highest-rated, correctly-attributed track.
+
+    Only used when Songstats has no artist avatar. Filters to tracks whose ``artist_name`` actually
+    matches the resolved artist (excluding various-artists aggregators) BEFORE ranking by
+    ``track_rating`` — so a loosely-linked compilation track can't win the thumbnail. NOTE: this
+    still derives art from a track's album, which may itself be a compilation; that's why the
+    Songstats avatar is preferred upstream.
+    """
+    target = _fuzzy(resolved_name)
+    attributed = [
+        t
+        for t in tracks
+        if t.get("track_spotify_id")
+        and _fuzzy(t.get("artist_name", "")) == target
+        and _norm(t.get("artist_name", "")) not in AGGREGATOR_NAMES
+    ]
     candidates = sorted(
-        (t for t in tracks if t.get("track_spotify_id")),
+        attributed,
         key=lambda t: t.get("track_rating", 0) or 0,
         reverse=True,
     )
@@ -549,8 +566,11 @@ async def _resolve_mood_data(client: httpx.AsyncClient, tracks: list[dict], mxm_
 async def _resolve_songstats(client: httpx.AsyncClient, resolved_name: str, ss_key: str) -> dict:
     """Resolve the artist on Songstats and return their stats plus last-release signal.
 
-    Returns ``{"raw_stats": <by-source dict>, "last_release": <dict|None>}``. Both degrade
-    gracefully: empty ``raw_stats`` and ``None`` last_release when the artist isn't found.
+    Returns ``{"raw_stats": <by-source dict>, "last_release": <dict|None>, "avatar": <str|None>}``.
+    All degrade gracefully: empty ``raw_stats``, ``None`` last_release and ``None`` avatar when
+    the artist isn't found. ``avatar`` is Songstats' artist-level profile image (a proper Spotify
+    artist photo for most artists) — far more reliable than deriving art from a single track's
+    album, which can be a various-artists compilation.
     """
     headers = {"apikey": ss_key, "Accept": "application/json"}
     ss_search = await client.get(
@@ -561,7 +581,8 @@ async def _resolve_songstats(client: httpx.AsyncClient, resolved_name: str, ss_k
     ss_search.raise_for_status()
     results = ss_search.json().get("results", [])
     if not results:
-        return {"raw_stats": {}, "last_release": None}
+        return {"raw_stats": {}, "last_release": None, "avatar": None}
+    avatar = results[0].get("avatar") or None
     songstats_artist_id = results[0]["songstats_artist_id"]
     # Stats and catalogue are independent lookups — fetch concurrently.
     ss_stats, last_release = await asyncio.gather(
@@ -576,7 +597,7 @@ async def _resolve_songstats(client: httpx.AsyncClient, resolved_name: str, ss_k
     raw: dict = {}
     for entry in ss_stats.json().get("stats", []):
         raw[entry["source"]] = entry["data"]
-    return {"raw_stats": raw, "last_release": last_release}
+    return {"raw_stats": raw, "last_release": last_release, "avatar": avatar}
 
 
 @router.post("/artist")
@@ -783,11 +804,19 @@ async def _build_artist_report(name: str) -> dict:
         raw_stats = songstats["raw_stats"]
         last_release = songstats["last_release"]
 
-        # Step 3: artist thumbnail + mood analysis (both depend on resolved tracks)
-        artist_image_url, mood_data = await asyncio.gather(
-            _fetch_artist_image(client, tracks),
-            _resolve_mood_data(client, tracks, mxm_key),
-        )
+        # Step 3: artist thumbnail + mood analysis. The thumbnail prefers the Songstats artist
+        # avatar (a real artist photo) and only falls back to deriving album art from the
+        # artist's highest-rated, correctly-attributed track when Songstats has no avatar — this
+        # avoids picking up a various-artists compilation cover.
+        avatar = songstats["avatar"]
+        if avatar:
+            mood_data = await _resolve_mood_data(client, tracks, mxm_key)
+            artist_image_url = avatar
+        else:
+            artist_image_url, mood_data = await asyncio.gather(
+                _fetch_artist_image(client, tracks, resolved_name),
+                _resolve_mood_data(client, tracks, mxm_key),
+            )
 
     # Step 4: score
     scored = compute_discoverability_score(artist, tracks, raw_stats, mood_data, logger=logger)
