@@ -86,7 +86,3 @@ Built by **Lorenzo Porcaro**, with **Replit Agent** as a pair-programmer during 
 ## License
 
 Released under the [MIT License](LICENSE).
-
----
-
-Built in one week for the Musixmatch Musicathon 2026.
