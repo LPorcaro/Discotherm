@@ -482,6 +482,23 @@ def _mood_coherence(track_moods: list[list[str]], skipped: int) -> dict:
     analyzed = len(valid)
 
     if analyzed < 5:
+        if analyzed == 0:
+            mood_rec = (
+                f"None of the top tracks returned usable lyric mood analysis "
+                f"({skipped} skipped — restricted or no analysis available), so there is no "
+                "mood signal at all to assess profile consistency. The catalogue is currently "
+                "invisible to mood-based recommendation surfaces (mood playlists, radio, "
+                "auto-generated mixes). Ensure lyrics are delivered and unrestricted so these "
+                "surfaces can classify the artist in the first place."
+            )
+        else:
+            mood_rec = (
+                f"Only {analyzed} of the top tracks returned usable lyric mood analysis "
+                f"({skipped} skipped — restricted or no analysis available). That is too few "
+                "to assess mood-profile consistency reliably. Ensure lyrics are delivered and "
+                "unrestricted for the catalogue so mood-based recommendation surfaces "
+                "(mood playlists, radio, auto-generated mixes) can classify the artist."
+            )
         return {
             "name": "MOOD_COHERENCE",
             "score": 50,
@@ -492,13 +509,7 @@ def _mood_coherence(track_moods: list[list[str]], skipped: int) -> dict:
                 "avg_cosine_similarity": None,
                 "top_moods": [],
             },
-            "recommendation": (
-                f"Only {analyzed} of the top tracks returned usable lyric mood analysis "
-                f"({skipped} skipped — restricted or no analysis available). That is too few "
-                "to assess mood-profile consistency reliably. Ensure lyrics are delivered and "
-                "unrestricted for the catalogue so mood-based recommendation surfaces "
-                "(mood playlists, radio, auto-generated mixes) can classify the artist."
-            ),
+            "recommendation": mood_rec,
         }
 
     # Build the shared mood vocabulary: 25 base labels + any extras seen.
