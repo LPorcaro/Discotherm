@@ -271,8 +271,18 @@ def _stream_concentration(tracks: list[dict], tier: str = "emerging") -> dict:
     sorted_favs = sorted(favs, reverse=True)
     top3_favs = sum(sorted_favs[:3])
     concentration_pct = (top3_favs / total_favs) * 100
-    # Invert: 0 % concentration → 100 score; 100 % → 0 score
-    score = round(_clamp(100 - concentration_pct))
+    # Map concentration → score with a two-segment piecewise curve instead of a flat
+    # `100 - concentration_pct`. The old linear version flagged normal, hit-driven
+    # concentration (~40–55%, typical for most artists) as "warning", which over-alarmed.
+    # The curve is gentle below the 55% knee — where it sits at 65, comfortably inside the
+    # "good" band — and steeper above it, so warning/critical (the 60/30 cutoffs in _status)
+    # are reserved for genuinely lopsided catalogues (concentration >~58.5% / >~79%).
+    _KNEE_PCT = 55.0
+    _KNEE_SCORE = 65.0
+    if concentration_pct <= _KNEE_PCT:
+        score = round(_clamp(100 - concentration_pct * (100 - _KNEE_SCORE) / _KNEE_PCT))
+    else:
+        score = round(_clamp(_KNEE_SCORE * (100 - concentration_pct) / (100 - _KNEE_PCT)))
 
     established = tier in ("mid-tier", "major")
     following = _following_phrase(tier)
@@ -605,6 +615,11 @@ def _mood_coherence(
     top_moods = [mood for mood, _ in ranked[:3]]
     top_phrase = ", ".join(top_moods) if top_moods else "n/a"
 
+    # MOOD_COHERENCE deliberately uses 50/25 cutoffs rather than the global _status() 60/30.
+    # `score` here is derived from average pairwise cosine similarity of lyric-mood vectors,
+    # whose realistic range is compressed (even very consistent catalogues rarely exceed ~0.6
+    # mean similarity). Applying the 60/30 cutoffs would mislabel genuinely coherent artists as
+    # "warning", so the band edges are scaled to this metric's distribution.
     if score >= 50:
         status = "good"
         rec = (

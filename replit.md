@@ -6,7 +6,7 @@ Discotherm is a music discoverability diagnostic: enter an artist and it scores 
 
 - The app is a Python FastAPI service in `discoverability-check/` (uvicorn).
 - Dev: it runs on port 8000 via the `discoverability-check` workflow, and is ALSO served at `/` through the deployable `api-server` artifact on port 8080 (so the preview/proxy and production both work).
-- `pnpm --filter @workspace/api-server run typecheck` — typecheck the (now unused) Node api-server package
+- The `artifacts/api-server` Node package is an empty shell (no scripts/deps) repurposed only to host the Python app in production via its `artifact.toml`; there is no Node code to typecheck.
 - Required Python deps live in `discoverability-check/requirements.txt` and root `pyproject.toml`/`uv.lock` (keep them in sync).
 - API keys (secrets): `JAMBASE_API_KEY`, `MUSIXMATCH_API_KEY`, `SONGSTATS_API_KEY` power the external lookups; `SESSION_SECRET` for sessions.
 
