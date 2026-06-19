@@ -31,6 +31,7 @@ The report also surfaces upcoming touring activity (via JamBase) as a non-scored
 - Artist stats — monthly listeners, followers, popularity score
 - Playlist data — total and editorial playlist placement counts
 - Cross-platform stats — Spotify, Apple Music, TikTok, YouTube, Shazam, Deezer, SoundCloud presence and engagement (TikTok creates, Shazam counts)
+- Artist profile image (`avatar`) — the report thumbnail, a reliable artist-level photo that avoids the various-artists compilation covers you get from deriving art off a single track
 
 **JamBase API** (v3 Concert Data API, Bearer auth)
 - Live-events data — upcoming touring activity (the trial tier exposes upcoming events only), surfaced as a non-scored context badge on the report. This lookup is optional and degrades gracefully (the badge is simply omitted) when the key is absent or the artist has no upcoming shows.
