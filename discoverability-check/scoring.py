@@ -865,10 +865,27 @@ def compute_discoverability_score(
     # Instrumental awareness: when most of the catalogue has no lyrics, lyric-driven
     # diagnostics (CATALOGUE_DEPTH, MOOD_COHERENCE) aren't meaningful signals and are marked
     # not_applicable downstream so they neither help nor hurt the overall score.
+    #
+    # Musixmatch's `instrumental` flag is a sparse, positive-only tag: a genuinely instrumental
+    # catalogue (e.g. Bonobo) gets only a fraction of its tracks tagged instrumental==1, while
+    # the rest sit at instrumental==0 with has_lyrics==0 (unclassified, NOT "has vocals"). So we
+    # estimate instrumental-ness from the *absence of indexed lyrics* (has_lyrics != 1), which is
+    # the reliable inverse signal, and report that as instrumental_pct.
+    #
+    # Hybrid guard against false positives: an artist whose lyrics simply aren't indexed by
+    # Musixmatch (newer/indie/non-English acts) would also show a high non-lyrical pct, but with
+    # ~no explicit instrumental tags. A genuinely instrumental artist always has a meaningful
+    # share of explicit instrumental==1 tags. So we only flag primarily_instrumental when BOTH
+    # the non-lyrical share clears 60% AND the explicit instrumental tag share corroborates (>=10%).
     total_tracks = len(tracks)
-    instrumental_count = sum(1 for t in tracks if t.get("instrumental") == 1)
-    instrumental_pct = round((instrumental_count / total_tracks) * 100, 1) if total_tracks else 0.0
-    primarily_instrumental = instrumental_pct >= 60
+    explicit_instrumental_count = sum(1 for t in tracks if t.get("instrumental") == 1)
+    with_lyrics_count = sum(1 for t in tracks if t.get("has_lyrics") == 1)
+    non_lyrical_count = total_tracks - with_lyrics_count
+    instrumental_pct = round((non_lyrical_count / total_tracks) * 100, 1) if total_tracks else 0.0
+    explicit_instrumental_pct = (
+        round((explicit_instrumental_count / total_tracks) * 100, 1) if total_tracks else 0.0
+    )
+    primarily_instrumental = instrumental_pct >= 60 and explicit_instrumental_pct >= 10
 
     tier = _artist_tier(stats)
     d_catalogue = _catalogue_depth(tracks, tier, primarily_instrumental)
@@ -902,5 +919,6 @@ def compute_discoverability_score(
             "five core diagnostics."
         ),
         "instrumental_pct": instrumental_pct,
+        "primarily_instrumental": primarily_instrumental,
         "diagnostics": diagnostics,
     }

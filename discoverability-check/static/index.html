@@ -1152,9 +1152,11 @@
           `${data.total_tracks.toLocaleString()} track${data.total_tracks === 1 ? '' : 's'} found`;
 
         // Instrumental note: shown when the catalogue is majority-instrumental (lyric-based
-        // diagnostics get marked not_applicable server-side).
+        // diagnostics get marked not_applicable server-side). Use the backend's authoritative
+        // `primarily_instrumental` flag — it applies a corroboration guard on top of the raw
+        // non-lyrical percentage, so the badge must not be recomputed from instrumental_pct here.
         const instrEl = document.getElementById('res-instrumental-note');
-        instrEl.classList.toggle('show', Number(data.instrumental_pct) >= 60);
+        instrEl.classList.toggle('show', data.primarily_instrumental === true);
 
         // Wire the PDF export to the *resolved* artist name so the download matches what's shown.
         document.getElementById('pdf-btn').onclick = () => {
